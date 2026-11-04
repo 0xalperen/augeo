@@ -1,0 +1,15 @@
+[package]
+name = "augeo-command"
+description = "Parser for the auge! command grammar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = "1.12.0"
