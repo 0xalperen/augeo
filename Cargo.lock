@@ -25,6 +25,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "augeo-engine"
+version = "0.1.0"
+dependencies = [
+ "augeo-catalog",
+ "augeo-command",
+ "augeo-fakes",
+ "augeo-journal",
+ "augeo-ports",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "augeo-fakes"
+version = "0.1.0"
+dependencies = [
+ "augeo-ports",
+]
+
+[[package]]
+name = "augeo-journal"
+version = "0.1.0"
+dependencies = [
+ "augeo-fakes",
+ "augeo-ports",
+ "crc32fast",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "augeo-ports"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -136,6 +175,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "crc32fast"
+version = "1.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]
