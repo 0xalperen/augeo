@@ -6,6 +6,8 @@
 //! A sweep only stops once a run completes without its fault firing, so it can't pass by stopping
 //! early. If a sweep hits the limit, it fails.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use std::collections::BTreeMap;

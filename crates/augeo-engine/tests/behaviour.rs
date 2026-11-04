@@ -1,5 +1,7 @@
 //! What the engine promises when nothing crashes.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use augeo_engine::{
