@@ -1,0 +1,39 @@
+# Component: system. Numbers are permanent. See crates/augeo-catalog/src/schema.rs for the format.
+
+[[tweak]]
+id = "system-game-mode"
+component = "system"
+number = 1
+title = "Game Mode on"
+summary = """
+Turns on Windows Game Mode, which prioritises the game you are playing. NVIDIA recommends leaving it \
+on. PC-Tuning suggests testing both ways, and no controlled test since 2024 was found, so use the \
+benchmark to check your own system.\
+"""
+danger = 0
+evidence = "Documented"
+effect = "now"
+preset = true
+risks = ["Background tasks such as recording or downloads may get less CPU while a game runs."]
+undo_note = "Restores your previous Game Mode setting, including removing the value if it did not exist."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows/apps/develop/settings/settings-windows-11"
+retrieved = "2026-11-04"
+claim = "Documents the AutoGameModeEnabled setting and its values."
+
+[[tweak.sources]]
+url = "https://www.nvidia.com/en-us/geforce/guides/system-latency-optimization-guide/"
+retrieved = "2026-11-04"
+claim = "NVIDIA recommends Game Mode on."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "user"
+path = 'Software\Microsoft\GameBar'
+name = "AutoGameModeEnabled"
+type = "dword"
+desired = 1

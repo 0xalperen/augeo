@@ -1,0 +1,50 @@
+# Component: cpu. Numbers are permanent. See crates/augeo-catalog/src/schema.rs for the format.
+
+[[tweak]]
+id = "cpu-debug-timer-overrides"
+component = "cpu"
+number = 1
+title = "Remove debug-only boot timer overrides"
+summary = """
+Old tweak guides often set these boot options. Microsoft documents them as for debugging only, and \
+forcing the platform clock moves the performance counter away from the faster TSC. This repair \
+removes any that are set, and does nothing if none are.\
+"""
+kind = "repair"
+danger = 2
+evidence = "Documented"
+effect = "restart"
+risks = [
+    "Changes boot configuration, and needs a restart to take effect.",
+    "Boot configuration changes can prompt for a BitLocker recovery key on an encrypted drive. Have your key available.",
+]
+undo_note = "Sets each removed boot option back to its previous value. Takes effect after a restart."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--set"
+retrieved = "2026-11-04"
+claim = "These options should only be used for debugging, and need a restart."
+
+[[tweak.sources]]
+url = "https://raw.githubusercontent.com/djdallmann/GamingPCSetup/master/CONTENT/RESEARCH/WINKERNEL/README.md"
+retrieved = "2026-11-04"
+claim = "useplatformclock moves the performance counter off TSC; tscsyncpolicy showed no notable effect."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "bcd_element"
+element = "useplatformclock"
+
+[[tweak.rev.resource]]
+kind = "bcd_element"
+element = "useplatformtick"
+
+[[tweak.rev.resource]]
+kind = "bcd_element"
+element = "disabledynamictick"
+
+[[tweak.rev.resource]]
+kind = "bcd_element"
+element = "tscsyncpolicy"
