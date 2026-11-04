@@ -92,6 +92,24 @@ tscsyncpolicy           Enhanced
 nx                      OptIn
 ";
 
+    /// Only reads. `nx` is set on every normal Windows boot entry.
+    #[cfg(feature = "admin-tests")]
+    #[test]
+    fn elevated_reads_find_the_real_boot_entry() {
+        let output = run(&["/enum", "{current}", "/v"]).unwrap();
+        println!("{output}");
+        assert!(matches!(read("nx").unwrap(), Value::Text(_)), "{output}");
+        assert_eq!(read("nosuchelement").unwrap(), Value::Absent);
+        for element in [
+            "useplatformclock",
+            "useplatformtick",
+            "disabledynamictick",
+            "tscsyncpolicy",
+        ] {
+            println!("{element} = {:?}", read(element).unwrap());
+        }
+    }
+
     #[test]
     fn elements_are_found_by_exact_name() {
         assert_eq!(

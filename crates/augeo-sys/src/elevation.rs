@@ -164,14 +164,15 @@ fn quote_argument(argument: &str) -> String {
 
 /// Relaunches this program elevated, in a new window, and waits for it to exit.
 ///
-/// The only input passed along is one command string. The elevated copy parses it again, plans again
+/// The only input passed along is a command string. The elevated copy parses it again, plans again
 /// and asks for confirmation again, and there is deliberately no way to skip that. So a program that
 /// starts augeo with crafted arguments can't get a change past the confirmation screen.
-pub fn relaunch_elevated(command: &str) -> Result<Elevation, PortError> {
+pub fn relaunch_elevated(args: &[&str]) -> Result<Elevation, PortError> {
     let exe = std::env::current_exe()
         .map_err(|e| PortError::Failed(format!("finding this program: {e}")))?;
     let exe_w: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
-    let parameters = wide(&quote_argument(command));
+    let quoted: Vec<String> = args.iter().map(|a| quote_argument(a)).collect();
+    let parameters = wide(&quoted.join(" "));
     let verb = wide("runas");
 
     let mut info = SHELLEXECUTEINFOW {

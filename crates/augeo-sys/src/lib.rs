@@ -4,6 +4,7 @@
 //! one documented API with arguments that are valid for the length of the call.
 
 mod bcd;
+pub mod detect;
 pub mod elevation;
 pub mod hardening;
 mod nvapi;
