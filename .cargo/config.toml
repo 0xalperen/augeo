@@ -1,0 +1,3 @@
+[target.x86_64-pc-windows-msvc]
+# A single augeo.exe with no separate C runtime to install.
+rustflags = ["-C", "target-feature=+crt-static"]

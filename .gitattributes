@@ -1,0 +1,2 @@
+# Keep line endings stable so catalog hashes match on every machine.
+* text=auto eol=lf
