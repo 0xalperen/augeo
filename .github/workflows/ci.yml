@@ -33,17 +33,37 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # Failures also go out as annotations, which can be read without signing in.
       - name: Test
-        run: cargo test --workspace --locked
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --locked 2>&1 | tee test-output.txt || {
+            grep -E "panicked at|^test .*FAILED|^error" test-output.txt | head -20 | sed 's/^/::error::/'
+            exit 1
+          }
 
       - name: Tests that need elevation (the runner is elevated)
-        run: cargo test -p augeo-sys --features admin-tests --locked
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p augeo-sys --features admin-tests --locked 2>&1 | tee test-output.txt || {
+            grep -E -A2 "panicked at|^test .*FAILED|^error" test-output.txt | head -30 | sed 's/^/::error::/'
+            exit 1
+          }
 
       - name: Stable tweak numbering
         run: cargo xtask check-numbering
 
       - name: Unsafe stays in one crate
         run: cargo xtask check-boundaries
+
+      - name: NVAPI layouts match NVIDIA's headers
+        shell: bash
+        run: |
+          git clone --quiet https://github.com/NVIDIA/nvapi.git "$RUNNER_TEMP/nvapi"
+          git -C "$RUNNER_TEMP/nvapi" checkout --quiet 70d337db9186e968eab622f7e786de7e437faf3d
+          cargo xtask check-nvapi-layout "$RUNNER_TEMP/nvapi"
 
       - name: Licenses and banned crates
         run: cargo deny check licenses bans sources

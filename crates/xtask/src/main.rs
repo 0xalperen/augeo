@@ -269,6 +269,87 @@ fn check_binary(binary: Option<String>) -> Result<(), String> {
     }
 }
 
+/// The layouts asserted in `augeo-sys/src/nvapi.rs`, as `(C expression, expected)`.
+const NVAPI_LAYOUT: &[(&str, usize)] = &[
+    ("sizeof(NVDRS_SETTING_V1)", 12320),
+    ("offsetof(NVDRS_SETTING_V1, settingId)", 4100),
+    ("offsetof(NVDRS_SETTING_V1, settingLocation)", 4108),
+    ("offsetof(NVDRS_SETTING_V1, u32CurrentValue)", 8220),
+    ("sizeof(NVDRS_PROFILE_V1)", 4116),
+    ("offsetof(NVDRS_PROFILE_V1, numOfSettings)", 4112),
+    ("sizeof(NVDRS_APPLICATION_V4)", 20492),
+    ("offsetof(NVDRS_APPLICATION_V4, commandLine)", 16396),
+    ("NVDRS_SETTING_VER1", 0x0001_3020),
+    ("NVDRS_PROFILE_VER1", 0x0001_1014),
+    ("NVDRS_APPLICATION_VER_V4", 0x0004_500C),
+];
+
+/// Compiles a small C program against NVIDIA's headers and compares what it reports with the layouts
+/// augeo uses. CI has no GPU, so a wrong layout would otherwise only show up on a user's machine.
+fn check_nvapi_layout(headers: Option<String>) -> Result<(), String> {
+    let headers = headers.ok_or("usage: cargo xtask check-nvapi-layout <NVIDIA nvapi folder>")?;
+    let tool = dumpbin()?;
+    let install = tool
+        .ancestors()
+        .nth(8)
+        .ok_or("no Visual Studio folder")?
+        .to_path_buf();
+    let vcvars = install.join(r"VC\Auxiliary\Build\vcvars64.bat");
+
+    let work = std::env::temp_dir().join(format!("augeo-layout-{}", std::process::id()));
+    std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    let mut source = String::from(
+        "#include <stdio.h>\n#include <stddef.h>\n#include \"nvapi.h\"\nint main(void) {\n",
+    );
+    for (expression, _) in NVAPI_LAYOUT {
+        source.push_str(&format!("printf(\"%zu\\n\", (size_t)({expression}));\n"));
+    }
+    source.push_str("return 0;\n}\n");
+    std::fs::write(work.join("layout.c"), source).map_err(|e| e.to_string())?;
+
+    let script = format!(
+        "@call \"{}\" >nul\r\n@cl /nologo /I \"{headers}\" layout.c /Fe:layout.exe\r\n@if errorlevel 1 exit /b 1\r\n@.\\layout.exe\r\n",
+        vcvars.display()
+    );
+    std::fs::write(work.join("run.cmd"), script).map_err(|e| e.to_string())?;
+    let output = Command::new("cmd")
+        .arg("/c")
+        .arg(work.join("run.cmd"))
+        .current_dir(&work)
+        .output()
+        .map_err(|e| format!("couldn't run the compiler: {e}"))?;
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let _ = std::fs::remove_dir_all(&work);
+    if !output.status.success() {
+        return Err(format!(
+            "compiling against nvapi.h failed:\n{text}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let reported: Vec<usize> = text.lines().filter_map(|l| l.trim().parse().ok()).collect();
+    if reported.len() != NVAPI_LAYOUT.len() {
+        return Err(format!(
+            "expected {} numbers, got:\n{text}",
+            NVAPI_LAYOUT.len()
+        ));
+    }
+    let mut problems = Vec::new();
+    for ((expression, expected), actual) in NVAPI_LAYOUT.iter().zip(reported) {
+        if *expected != actual {
+            problems.push(format!(
+                "{expression}: C says {actual}, augeo assumes {expected}"
+            ));
+        }
+    }
+    if problems.is_empty() {
+        println!("{} NVAPI layout facts match", NVAPI_LAYOUT.len());
+        Ok(())
+    } else {
+        Err(problems.join("\n"))
+    }
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let task = args.next().unwrap_or_default();
@@ -277,8 +358,9 @@ fn main() -> ExitCode {
         "update-lock" => update_lock(),
         "check-boundaries" => check_boundaries(),
         "check-binary" => check_binary(args.next()),
+        "check-nvapi-layout" => check_nvapi_layout(args.next()),
         _ => Err(
-            "usage: cargo xtask <check-numbering | update-lock | check-boundaries | check-binary>"
+            "usage: cargo xtask <check-numbering | update-lock | check-boundaries | check-binary | check-nvapi-layout>"
                 .to_string(),
         ),
     };
