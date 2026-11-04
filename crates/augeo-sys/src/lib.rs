@@ -18,6 +18,7 @@ mod registry;
 pub mod restore;
 pub mod state_dir;
 mod store;
+pub mod tools;
 mod util;
 
 use std::path::PathBuf;
