@@ -36,8 +36,14 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      - name: Tests that need elevation (the runner is elevated)
+        run: cargo test -p augeo-sys --features admin-tests --locked
+
       - name: Stable tweak numbering
         run: cargo xtask check-numbering
+
+      - name: Unsafe stays in one crate
+        run: cargo xtask check-boundaries
 
       - name: Licenses and banned crates
         run: cargo deny check licenses bans sources
@@ -47,6 +53,9 @@ jobs:
 
       - name: Release build
         run: cargo build --release --locked -p augeo
+
+      - name: No network DLLs, and protected against DLL planting
+        run: cargo xtask check-binary target/release/augeo.exe
 
       - uses: actions/upload-artifact@v4
         with:

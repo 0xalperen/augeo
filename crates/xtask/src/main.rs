@@ -1,4 +1,4 @@
-//! Repository checks: `cargo xtask check-numbering` and `cargo xtask update-lock`.
+//! Repository checks: `cargo xtask <check-numbering | update-lock | check-boundaries | check-binary>`.
 
 #![forbid(unsafe_code)]
 
@@ -17,6 +17,19 @@ use augeo_catalog::{
 };
 
 const LOCK_PATH: &str = "catalog/registry.lock";
+/// The one crate allowed to use `unsafe` and the `windows` crate.
+const SYS_CRATE: &str = "augeo-sys";
+/// augeo makes no network calls, so its binary must not import any of these.
+const NETWORK_DLLS: &[&str] = &[
+    "ws2_32.dll",
+    "wsock32.dll",
+    "winhttp.dll",
+    "wininet.dll",
+    "urlmon.dll",
+    "dnsapi.dll",
+    "webio.dll",
+    "bitsproxy.dll",
+];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -74,8 +87,8 @@ fn update_lock() -> Result<(), String> {
 }
 
 /// Walks every committed version of the lock, oldest first, then the working copy, and fails on any
-/// broken promise. Using the full history means a force-push or a squashed batch can't hide a change,
-/// as long as the checkout has full history (`fetch-depth: 0`).
+/// broken promise. Using the full history means a squashed batch can't hide a change, as long as the
+/// checkout has full history (`fetch-depth: 0`).
 fn check_numbering() -> Result<(), String> {
     let mut problems = Vec::new();
 
@@ -122,12 +135,152 @@ fn check_numbering() -> Result<(), String> {
     }
 }
 
+/// Confines `unsafe` and the `windows` crate to one crate, and fails if any other crate's root stops
+/// forbidding `unsafe`.
+fn check_boundaries() -> Result<(), String> {
+    let mut problems = Vec::new();
+    let crates = repo_root().join("crates");
+    let entries = std::fs::read_dir(&crates).map_err(|e| e.to_string())?;
+    let mut checked = 0;
+    for entry in entries {
+        let dir = entry.map_err(|e| e.to_string())?.path();
+        let Some(name) = dir.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        if !dir.join("Cargo.toml").exists() || name == SYS_CRATE {
+            continue;
+        }
+        checked += 1;
+        let manifest =
+            std::fs::read_to_string(dir.join("Cargo.toml")).map_err(|e| e.to_string())?;
+        if manifest
+            .lines()
+            .any(|l| l.trim_start().starts_with("windows") || l.contains("dependencies.windows"))
+        {
+            problems.push(format!(
+                "{name} depends on the windows crate; only {SYS_CRATE} may"
+            ));
+        }
+        let roots: Vec<PathBuf> = ["src/lib.rs", "src/main.rs"]
+            .iter()
+            .map(|r| dir.join(r))
+            .filter(|p| p.exists())
+            .collect();
+        if roots.is_empty() {
+            problems.push(format!("{name} has no crate root"));
+        }
+        for root in roots {
+            let text = std::fs::read_to_string(&root).map_err(|e| e.to_string())?;
+            if !text.contains("#![forbid(unsafe_code)]") {
+                problems.push(format!("{} must forbid unsafe code", root.display()));
+            }
+        }
+    }
+    if problems.is_empty() {
+        println!("{checked} crates keep to the boundary");
+        Ok(())
+    } else {
+        Err(problems.join("\n"))
+    }
+}
+
+fn dumpbin() -> Result<PathBuf, String> {
+    let program_files = std::env::var("ProgramFiles(x86)")
+        .map_err(|_| "ProgramFiles(x86) isn't set".to_string())?;
+    let vswhere = Path::new(&program_files).join(r"Microsoft Visual Studio\Installer\vswhere.exe");
+    let output = Command::new(vswhere)
+        .args([
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ])
+        .output()
+        .map_err(|e| format!("couldn't run vswhere: {e}"))?;
+    let install = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let version_file =
+        Path::new(&install).join(r"VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt");
+    let version = std::fs::read_to_string(&version_file)
+        .map_err(|e| format!("reading {}: {e}", version_file.display()))?;
+    Ok(Path::new(&install)
+        .join(r"VC\Tools\MSVC")
+        .join(version.trim())
+        .join(r"bin\HostX64\x64\dumpbin.exe"))
+}
+
+fn run_dumpbin(tool: &Path, flag: &str, binary: &str) -> Result<String, String> {
+    let output = Command::new(tool)
+        .args(["/nologo", flag, binary])
+        .output()
+        .map_err(|e| format!("couldn't run dumpbin: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("dumpbin {flag} failed on {binary}"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Checks the release binary itself: no network DLLs, and protection against planted DLLs.
+fn check_binary(binary: Option<String>) -> Result<(), String> {
+    let binary = binary.ok_or("usage: cargo xtask check-binary <path to augeo.exe>")?;
+    let tool = dumpbin()?;
+    let mut problems = Vec::new();
+
+    let imports: BTreeSet<String> = run_dumpbin(&tool, "/imports", &binary)?
+        .lines()
+        .filter_map(|l| {
+            let word = l.trim();
+            let lower = word.to_ascii_lowercase();
+            (lower.ends_with(".dll") && !word.contains(' ')).then_some(lower)
+        })
+        .collect();
+    println!(
+        "imports: {}",
+        imports.iter().cloned().collect::<Vec<_>>().join(", ")
+    );
+    if imports.is_empty() {
+        problems
+            .push("found no imports, so this check isn't reading the file properly".to_string());
+    }
+    for dll in NETWORK_DLLS {
+        if imports.contains(*dll) {
+            problems.push(format!("imports {dll}, but augeo makes no network calls"));
+        }
+    }
+
+    let load_config = run_dumpbin(&tool, "/loadconfig", &binary)?;
+    // A line reads like "    0800 Dependent Load Flag".
+    let protected = load_config
+        .lines()
+        .filter(|l| l.contains("Dependent Load Flag"))
+        .filter_map(|l| l.split_whitespace().next())
+        .any(|flag| u32::from_str_radix(flag, 16) == Ok(0x800));
+    if !protected {
+        problems.push("the binary isn't linked with /DEPENDENTLOADFLAG:0x800".to_string());
+    }
+
+    if problems.is_empty() {
+        println!("{binary} passes");
+        Ok(())
+    } else {
+        Err(problems.join("\n"))
+    }
+}
+
 fn main() -> ExitCode {
-    let task = std::env::args().nth(1).unwrap_or_default();
+    let mut args = std::env::args().skip(1);
+    let task = args.next().unwrap_or_default();
     let result = match task.as_str() {
         "check-numbering" => check_numbering(),
         "update-lock" => update_lock(),
-        _ => Err("usage: cargo xtask <check-numbering | update-lock>".to_string()),
+        "check-boundaries" => check_boundaries(),
+        "check-binary" => check_binary(args.next()),
+        _ => Err(
+            "usage: cargo xtask <check-numbering | update-lock | check-boundaries | check-binary>"
+                .to_string(),
+        ),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
