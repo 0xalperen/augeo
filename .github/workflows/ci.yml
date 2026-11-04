@@ -36,6 +36,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      - name: Stable tweak numbering
+        run: cargo xtask check-numbering
+
       - name: Licenses and banned crates
         run: cargo deny check licenses bans sources
 
