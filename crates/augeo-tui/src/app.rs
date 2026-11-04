@@ -47,6 +47,15 @@ pub trait Host {
     fn list_runs(&self) -> Vec<SavedRun>;
     /// Signals the start or end of a run, since the user is looking at their game.
     fn beep(&mut self);
+    /// The timer tool's report. With `hold`, asks for high resolution until told otherwise.
+    fn timer_report(&mut self, hold: bool) -> Vec<String>;
+    fn start_polling_meter(&mut self);
+    /// `None` while measuring, then what was found.
+    fn poll_polling_meter(&mut self) -> Option<Vec<String>>;
+    /// Adds a line to the log file.
+    fn log(&mut self, line: &str);
+    /// The end of the log file.
+    fn read_log(&self) -> Vec<String>;
     fn now_ms(&self) -> u64;
 }
 
@@ -182,6 +191,11 @@ pub(crate) enum Screen {
         deadline: Instant,
     },
     Bench(Box<crate::bench::BenchSession>),
+    Timer {
+        holding: bool,
+        lines: Vec<String>,
+    },
+    PollingMeter,
 }
 
 /// A clickable thing on screen, rebuilt on every draw.
@@ -224,6 +238,8 @@ pub(crate) enum Button {
     RevertDisplay,
     BenchGo,
     BenchStop,
+    TimerHold,
+    TimerClose,
 }
 
 /// Regions that scroll under the mouse wheel.
@@ -666,6 +682,9 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
         let mut lines = Vec::new();
         let verb = if op == Op::Apply { "Applied" } else { "Undone" };
         for (instance, result) in &report.results {
+            self.host.log(&format!("{op:?} {instance}: {result:?}"));
+        }
+        for (instance, result) in &report.results {
             lines.push(match result {
                 TweakResult::Done => format!("{verb} and verified: {instance}"),
                 TweakResult::NoChange => format!("No change was needed: {instance}"),
@@ -936,11 +955,24 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             Command::Check => self.show_check(),
             Command::Myths => self.show_myths(),
             Command::Log => {
-                self.message = Some("Logs are in %ProgramData%\\augeo\\logs.".to_string())
+                let lines = self.host.read_log();
+                self.screen = Screen::Text {
+                    title: "Log".to_string(),
+                    lines,
+                    scroll: 0,
+                };
             }
             Command::Bench(args) => self.run_bench_command(input, &args),
-            Command::Timer | Command::Polling => {
-                self.message = Some("This tool arrives in a later milestone.".to_string());
+            Command::Timer => {
+                let lines = self.host.timer_report(false);
+                self.screen = Screen::Timer {
+                    holding: false,
+                    lines,
+                };
+            }
+            Command::Polling => {
+                self.host.start_polling_meter();
+                self.screen = Screen::PollingMeter;
             }
         }
     }
@@ -985,6 +1017,19 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                     self.screen = Screen::Confirm(state);
                 }
             }
+            Button::TimerHold => {
+                if let Screen::Timer { holding, .. } = self.screen {
+                    let holding = !holding;
+                    let lines = self.host.timer_report(holding);
+                    self.screen = Screen::Timer { holding, lines };
+                }
+            }
+            Button::TimerClose => {
+                if let Screen::Timer { holding: true, .. } = self.screen {
+                    let _ = self.host.timer_report(false);
+                }
+                self.screen = Screen::Main;
+            }
             Button::BenchGo => self.bench_start_countdown(Instant::now()),
             Button::BenchStop => self.bench_cancel(),
             Button::KeepDisplay => {
@@ -1011,6 +1056,15 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
     /// Lets time-based things happen. Call this regularly.
     pub fn on_tick(&mut self, now: Instant) {
         self.bench_tick(now);
+        if matches!(self.screen, Screen::PollingMeter)
+            && let Some(lines) = self.host.poll_polling_meter()
+        {
+            self.screen = Screen::Text {
+                title: "Mouse polling rate".to_string(),
+                lines,
+                scroll: 0,
+            };
+        }
         if let Screen::KeepDisplay { instance, deadline } = &self.screen
             && now >= *deadline
         {
@@ -1231,6 +1285,17 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                 };
                 Flow::Continue
             }
+            Screen::Timer { .. } => {
+                match key.code {
+                    KeyCode::Char('h' | 'H') => return self.press_button(Button::TimerHold),
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                        return self.press_button(Button::TimerClose);
+                    }
+                    _ => {}
+                }
+                Flow::Continue
+            }
+            Screen::PollingMeter => Flow::Continue,
             Screen::Bench(_) => {
                 match key.code {
                     KeyCode::Enter => return self.press_button(Button::BenchGo),

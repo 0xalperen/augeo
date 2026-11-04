@@ -3,9 +3,10 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    io,
+    io::{self, Write},
     path::PathBuf,
     process::ExitCode,
+    sync::mpsc::Receiver,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -24,7 +25,7 @@ use augeo_sys::{
     elevation::{self, Elevation},
     nic, nvml, presentmon, restore,
     restore::RestorePoint,
-    state_dir,
+    state_dir, tools,
 };
 use augeo_tui::{App, Flow, Host};
 use crossterm::{
@@ -69,6 +70,41 @@ fn local_config_dir() -> Option<PathBuf> {
 #[derive(Debug, Default)]
 struct RealHost {
     capture: Option<(presentmon::Capture, String)>,
+    polling: Option<Receiver<Result<Vec<f64>, String>>>,
+}
+
+const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Elevated, the log lives in the locked-down state folder. Otherwise in this user's own folder.
+fn log_path() -> Option<PathBuf> {
+    let elevated = elevation::is_elevated().unwrap_or(false);
+    let dir = if elevated {
+        state_dir::location().ok()?.join("logs")
+    } else {
+        local_config_dir()?.join("logs")
+    };
+    Some(dir.join("augeo.log"))
+}
+
+/// Appends one line. A log failure must never get in the way of anything, so errors are ignored.
+fn write_log(line: &str) {
+    let Some(path) = log_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // One old file is kept, so a log can't grow forever.
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_LOG_BYTES) {
+        let _ = std::fs::rename(&path, path.with_extension("log.old"));
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(file, "{} {line}", RealClock.now_ms());
+    }
 }
 
 fn runs_dir() -> Result<PathBuf, String> {
@@ -143,6 +179,96 @@ impl Host for RealHost {
 
     fn beep(&mut self) {
         detect::beep();
+    }
+
+    fn timer_report(&mut self, hold: bool) -> Vec<String> {
+        const TARGET_MS: f64 = 0.5;
+        let hold_result = tools::hold_timer_resolution(TARGET_MS, hold);
+        let mut lines = Vec::new();
+        match tools::timer_resolution() {
+            Ok(r) => {
+                lines.push(format!(
+                    "Timer resolution now: {:.3} ms. This PC's range is {:.3} to {:.3} ms.",
+                    r.current_ms, r.finest_ms, r.coarsest_ms
+                ));
+            }
+            Err(e) => lines.push(e),
+        }
+        if let Err(e) = hold_result {
+            lines.push(e);
+        }
+        lines.push(format!(
+            "Sleep(1) really takes {:.3} ms on average.",
+            tools::measure_sleep_ms(100)
+        ));
+        lines.push(String::new());
+        lines.push(if hold {
+            format!("Holding {TARGET_MS} ms for this program. It ends when you close this screen.")
+        } else {
+            "Holding is off. Windows applies a program's request only to that program.".to_string()
+        });
+        lines.push(String::new());
+        lines.push(
+            "What this shows: higher resolution makes sleeps more precise, but that hasn't been \
+             shown to lower gaming latency, and Microsoft warns it costs power and can hurt \
+             performance. For it to reach other programs on Windows 11, cpu#2 must be applied."
+                .to_string(),
+        );
+        lines
+    }
+
+    fn start_polling_meter(&mut self) {
+        self.polling = Some(tools::start_polling_meter(5));
+    }
+
+    fn poll_polling_meter(&mut self) -> Option<Vec<String>> {
+        let result = self.polling.as_ref()?.try_recv().ok()?;
+        self.polling = None;
+        let lines = match result.map(|times| tools::polling_from_times(&times)) {
+            Ok(Some(polling)) => {
+                let mut lines = vec![format!(
+                    "Measured about {:.0} Hz, which is closest to the standard {} Hz, from {} reports.",
+                    polling.measured_hz, polling.nearest_standard_hz, polling.events
+                )];
+                if polling.nearest_standard_hz < 1000 {
+                    lines.push(String::new());
+                    lines.push(
+                        "NVIDIA says 125 Hz can add up to 3 ms over 1000 Hz. If your mouse supports \
+                         more, set it in the mouse's own software."
+                            .to_string(),
+                    );
+                }
+                lines
+            }
+            Ok(None) => vec![
+                "Not enough movement to tell. Try again, moving the mouse quickly.".to_string(),
+            ],
+            Err(e) => vec![e],
+        };
+        Some(lines)
+    }
+
+    fn log(&mut self, line: &str) {
+        write_log(line);
+    }
+
+    fn read_log(&self) -> Vec<String> {
+        let path = log_path();
+        let text = path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        let lines: Vec<&str> = text.lines().collect();
+        let start = lines.len().saturating_sub(200);
+        let mut out: Vec<String> = lines[start..].iter().map(|l| (*l).to_string()).collect();
+        if out.is_empty() {
+            out.push("Nothing logged yet.".to_string());
+        }
+        if let Some(path) = path {
+            out.push(String::new());
+            out.push(format!("From {}", path.display()));
+        }
+        out
     }
 
     fn now_ms(&self) -> u64 {
@@ -334,8 +460,10 @@ fn run_app(startup_command: Option<String>) -> Result<(), String> {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore_terminal();
+        write_log(&format!("crash: {info}"));
         default_hook(info);
     }));
+    write_log(&format!("started, version {}", env!("CARGO_PKG_VERSION")));
 
     enable_raw_mode().map_err(|e| e.to_string())?;
     let mut out = io::stdout();

@@ -38,6 +38,10 @@ struct FakeHost {
     next_capture: VecDeque<Result<String, String>>,
     saved: Vec<SavedRun>,
     display_mode: String,
+    timer_holds: Vec<bool>,
+    polling_started: bool,
+    polling_result: Option<Vec<String>>,
+    logged: Vec<String>,
 }
 
 impl Host for FakeHost {
@@ -87,6 +91,25 @@ impl Host for FakeHost {
     }
     fn now_ms(&self) -> u64 {
         1_700_000_000_000
+    }
+    fn timer_report(&mut self, hold: bool) -> Vec<String> {
+        self.timer_holds.push(hold);
+        vec![format!(
+            "Sleep(1) takes {} ms",
+            if hold { "1.1" } else { "2.0" }
+        )]
+    }
+    fn start_polling_meter(&mut self) {
+        self.polling_started = true;
+    }
+    fn poll_polling_meter(&mut self) -> Option<Vec<String>> {
+        self.polling_result.take()
+    }
+    fn log(&mut self, line: &str) {
+        self.logged.push(line.to_string());
+    }
+    fn read_log(&self) -> Vec<String> {
+        self.logged.clone()
     }
     fn check_report(&mut self) -> Vec<String> {
         vec!["[LOOK] RAM speed (best guess)".to_string()]
@@ -1342,6 +1365,49 @@ fn comparing_series_refuses_different_conditions() {
 
     rig.command("auge!bench list");
     assert!(rig.text().contains(&first));
+}
+
+#[test]
+fn the_timer_hold_ends_when_the_screen_closes() {
+    let mut rig = Rig::main();
+    rig.command("auge!timer");
+    assert!(rig.text().contains("Sleep(1) takes 2.0 ms"));
+    rig.key(KeyCode::Char('h'));
+    assert!(rig.text().contains("Sleep(1) takes 1.1 ms"));
+    assert!(rig.text().contains("Stop holding"));
+    rig.key(KeyCode::Esc);
+    assert!(rig.screen_is_main());
+    assert_eq!(rig.app.host.timer_holds, vec![false, true, false]);
+    assert!(rig.world.writes().is_empty());
+}
+
+#[test]
+fn the_polling_meter_waits_then_reports() {
+    let mut rig = Rig::main();
+    rig.command("auge!polling");
+    assert!(rig.app.host.polling_started);
+    assert!(rig.text().contains("Move your mouse"));
+    rig.app.on_tick(Instant::now());
+    assert!(matches!(rig.app.screen, Screen::PollingMeter));
+    rig.app.host.polling_result = Some(vec!["About 1000 Hz".to_string()]);
+    rig.app.on_tick(Instant::now());
+    assert!(rig.text().contains("About 1000 Hz"));
+}
+
+#[test]
+fn changes_are_logged_and_the_log_can_be_read() {
+    let mut rig = Rig::main();
+    rig.command("auge!system#1");
+    rig.skip_restore_offer();
+    rig.key(KeyCode::Enter);
+    assert!(
+        rig.app.host.logged.iter().any(|l| l.contains("safe")),
+        "{:?}",
+        rig.app.host.logged
+    );
+    rig.key(KeyCode::Esc);
+    rig.command("auge!log");
+    assert!(rig.text().contains("safe"));
 }
 
 #[test]

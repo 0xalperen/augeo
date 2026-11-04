@@ -274,7 +274,40 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             Screen::RestartPrompt => self.draw_restart(frame, area),
             Screen::KeepDisplay { deadline, .. } => self.draw_keep_display(frame, area, deadline),
             Screen::Bench(session) => self.draw_bench(frame, area, &session),
+            Screen::Timer { holding, lines } => self.draw_timer(frame, area, holding, &lines),
+            Screen::PollingMeter => {
+                frame.render_widget(
+                    Paragraph::new(
+                        "Move your mouse quickly in circles now, and keep going for 5 seconds. \
+                         Slow movement sends fewer reports, so fast movement gives the true rate.",
+                    )
+                    .wrap(Wrap { trim: true })
+                    .block(block("Measuring your mouse", true)),
+                    area,
+                );
+            }
         }
+    }
+
+    fn draw_timer(&mut self, frame: &mut Frame<'_>, area: Rect, holding: bool, lines: &[String]) {
+        let [body, buttons] =
+            Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(area);
+        let text: Vec<Line> = lines.iter().map(|l| Line::from(l.clone())).collect();
+        frame.render_widget(
+            Paragraph::new(text)
+                .wrap(Wrap { trim: false })
+                .block(block("Timer tool", true)),
+            body,
+        );
+        let mut row = ButtonRow::new(buttons);
+        let label = if holding {
+            "Stop holding (h)"
+        } else {
+            "Hold high resolution while open (h)"
+        };
+        row.add(label, Button::TimerHold, Style::default());
+        row.add("Close (Esc)", Button::TimerClose, Style::default());
+        row.finish(frame, buttons, &mut self.hits);
     }
 
     fn draw_bench(&mut self, frame: &mut Frame<'_>, area: Rect, session: &BenchSession) {
