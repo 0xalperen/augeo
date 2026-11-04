@@ -19,6 +19,7 @@ gpu-tests = []
 
 [dependencies]
 augeo-ports = { path = "../augeo-ports" }
+sha2 = "0.11.1"
 
 [dependencies.windows]
 version = "0.62"
@@ -30,6 +31,7 @@ features = [
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_Diagnostics_Debug",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Power",

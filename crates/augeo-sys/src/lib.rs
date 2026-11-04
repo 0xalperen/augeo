@@ -13,6 +13,7 @@ pub mod nic;
 mod nvapi;
 pub mod nvml;
 mod power;
+pub mod presentmon;
 mod registry;
 pub mod restore;
 pub mod state_dir;

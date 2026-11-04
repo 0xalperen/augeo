@@ -3,9 +3,13 @@
 use std::arch::x86_64::{__cpuid, __cpuid_count};
 
 use augeo_ports::{PortError, RegRoot, Value};
-use windows::Win32::System::{
-    Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS},
-    SystemInformation::GetTickCount64,
+use windows::Win32::{
+    System::{
+        Diagnostics::Debug::MessageBeep,
+        Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS},
+        SystemInformation::GetTickCount64,
+    },
+    UI::WindowsAndMessaging::MB_OK,
 };
 
 use crate::registry;
@@ -91,6 +95,12 @@ pub fn has_battery() -> bool {
         return false;
     }
     status.BatteryFlag & BATTERY_NONE == 0 && status.BatteryFlag != BATTERY_UNKNOWN
+}
+
+/// Plays the default system sound, to signal the start or end of a benchmark run.
+pub fn beep() {
+    // SAFETY: this takes a plain value. A failure only means no sound.
+    let _ = unsafe { MessageBeep(MB_OK) };
 }
 
 /// Asks Windows to restart now, using `shutdown.exe` from System32 with fixed arguments. Only ever
