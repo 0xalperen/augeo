@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod applicability;
+pub mod disclaimer;
 mod expand;
 
 use std::collections::{BTreeMap, BTreeSet};
