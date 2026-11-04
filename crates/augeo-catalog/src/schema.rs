@@ -20,6 +20,17 @@ fn component<'de, D: Deserializer<'de>>(d: D) -> Result<Component, D::Error> {
 pub struct CatalogFile {
     #[serde(default)]
     pub tweak: Vec<Tweak>,
+    #[serde(default)]
+    pub myth: Vec<Myth>,
+}
+
+/// A popular tweak augeo deliberately doesn't ship, and why. Shown on the Myths screen.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Myth {
+    pub name: String,
+    pub reason: String,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -120,6 +131,9 @@ pub struct Applicability {
     pub cpu_vendor: CpuVendorRule,
     #[serde(default)]
     pub cpu_layout: CpuLayoutRule,
+    /// Only when G-SYNC or another VRR mode is active on the primary display.
+    #[serde(default)]
+    pub vrr: bool,
 }
 
 impl Default for Applicability {
@@ -130,6 +144,7 @@ impl Default for Applicability {
             chassis: ChassisRule::default(),
             cpu_vendor: CpuVendorRule::default(),
             cpu_layout: CpuLayoutRule::default(),
+            vrr: false,
         }
     }
 }

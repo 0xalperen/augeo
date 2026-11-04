@@ -15,6 +15,50 @@ fn embedded_catalog_passes_every_lint_rule() {
 }
 
 #[test]
+fn every_myth_says_why_and_any_source_is_https() {
+    let catalog = Catalog::embedded().unwrap();
+    assert!(catalog.myths.len() >= 20);
+    for myth in &catalog.myths {
+        assert!(!myth.name.trim().is_empty());
+        assert!(myth.reason.trim().len() > 20, "{}", myth.name);
+        if let Some(source) = &myth.source {
+            assert!(source.starts_with("https://"), "{source}");
+        }
+    }
+}
+
+#[test]
+fn the_catalog_keeps_its_promises() {
+    let catalog = Catalog::embedded().unwrap();
+    // The one security-lowering tweak is at the top level and in no preset.
+    let lowering: Vec<_> = catalog
+        .tweaks
+        .iter()
+        .filter(|t| t.security_lowering)
+        .collect();
+    assert_eq!(lowering.len(), 1);
+    assert_eq!(lowering[0].danger, 4);
+    assert!(!lowering[0].preset);
+    // v0.1.0 disables no Windows service, and touches no boot setting except debug overrides.
+    for tweak in &catalog.tweaks {
+        for rev in &tweak.rev {
+            for resource in &rev.resource {
+                if let schema::Resource::RegValue { path, .. } = resource {
+                    assert!(!path.to_lowercase().contains(r"\services\"), "{path}");
+                }
+            }
+        }
+    }
+    // Every component's file loaded.
+    for component in augeo_command::Component::ALL {
+        assert!(
+            catalog.tweaks.iter().any(|t| t.component == component),
+            "{component} has no tweaks"
+        );
+    }
+}
+
+#[test]
 fn embedded_lock_matches_the_catalog() {
     let catalog = Catalog::embedded().unwrap();
     let lock = parse_lock(EMBEDDED_LOCK).unwrap();

@@ -10,12 +10,21 @@ pub mod lock;
 pub mod schema;
 
 use augeo_command::{CatalogView, Component, TweakStatus};
-use schema::{CatalogFile, Status, Tweak};
+use schema::{CatalogFile, Myth, Status, Tweak};
 
 /// The embedded catalog files. Each file's name must match the component of its tweaks.
 const FILES: &[(&str, &str)] = &[
     ("cpu", include_str!("../../../catalog/cpu.toml")),
+    ("gpu", include_str!("../../../catalog/gpu.toml")),
+    ("game", include_str!("../../../catalog/game.toml")),
+    ("display", include_str!("../../../catalog/display.toml")),
+    ("input", include_str!("../../../catalog/input.toml")),
+    ("network", include_str!("../../../catalog/network.toml")),
+    ("memory", include_str!("../../../catalog/memory.toml")),
+    ("power", include_str!("../../../catalog/power.toml")),
+    ("storage", include_str!("../../../catalog/storage.toml")),
     ("system", include_str!("../../../catalog/system.toml")),
+    ("myths", include_str!("../../../catalog/myths.toml")),
 ];
 
 /// The committed lock file, embedded so tests can compare it with the catalog.
@@ -25,12 +34,14 @@ pub const EMBEDDED_LOCK: &str = include_str!("../../../catalog/registry.lock");
 #[derive(Debug, Clone)]
 pub struct Catalog {
     pub tweaks: Vec<Tweak>,
+    pub myths: Vec<Myth>,
 }
 
 impl Catalog {
     /// Parses catalog files given as `(component name, TOML text)`.
     pub fn parse(files: &[(&str, &str)]) -> Result<Self, String> {
         let mut tweaks = Vec::new();
+        let mut myths = Vec::new();
         for (name, text) in files {
             let file: CatalogFile =
                 toml::from_str(text).map_err(|e| format!("catalog/{name}.toml: {e}"))?;
@@ -43,9 +54,10 @@ impl Catalog {
                 }
             }
             tweaks.extend(file.tweak);
+            myths.extend(file.myth);
         }
         tweaks.sort_by_key(|t| (t.component, t.number));
-        Ok(Self { tweaks })
+        Ok(Self { tweaks, myths })
     }
 
     /// The catalog built into this binary.

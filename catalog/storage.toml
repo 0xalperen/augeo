@@ -1,0 +1,35 @@
+# Component: storage. Numbers are permanent.
+
+[[tweak]]
+id = "storage-trim-on"
+component = "storage"
+number = 1
+title = "Turn TRIM back on"
+summary = """
+TRIM keeps SSDs fast over time, and it's on by default. If an old guide or tool turned it off, this \
+puts it back for NTFS drives.\
+"""
+kind = "repair"
+danger = 0
+evidence = "Documented"
+effect = "restart"
+preset = true
+risks = ["None known. This is Windows' default."]
+undo_note = "Restores your previous value."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-behavior"
+retrieved = "2026-11-05"
+claim = "DisableDeleteNotify 0 means TRIM is on."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "machine"
+path = 'SYSTEM\CurrentControlSet\Control\FileSystem'
+name = "DisableDeleteNotification"
+type = "dword"
+desired = 0
+accept_absent = true

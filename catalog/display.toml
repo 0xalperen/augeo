@@ -1,0 +1,75 @@
+# Component: display. Numbers are permanent.
+
+[[tweak]]
+id = "display-max-refresh"
+component = "display"
+number = 1
+title = "Use the monitor's highest refresh rate"
+summary = """
+Windows doesn't always pick the fastest mode, and a monitor left at 60 Hz is one of the largest \
+latency problems there is. NVIDIA calls raising refresh the best way to reduce display latency. This \
+sets the highest refresh at your current resolution, then reverts by itself after 15 seconds unless \
+you confirm the picture is fine.\
+"""
+kind = "repair"
+danger = 1
+evidence = "Documented"
+effect = "now"
+preset = true
+risks = [
+    "The screen goes dark briefly while changing mode.",
+    "A cable or monitor that can't really manage the mode can lose the picture. It reverts by itself after 15 seconds.",
+]
+undo_note = "Sets the display back to its previous mode."
+
+[[tweak.sources]]
+url = "https://www.nvidia.com/en-us/geforce/guides/system-latency-optimization-guide/"
+retrieved = "2026-11-05"
+claim = "Higher refresh reduces scanout latency, and increasing Hz is the best way to reduce display latency."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "display_mode"
+mode = "max_refresh"
+
+[[tweak]]
+id = "display-windowed-optimizations"
+component = "display"
+number = 2
+title = "Optimizations for windowed games"
+summary = """
+Lets DX10 and DX11 games in a window use the lower-latency flip model. It's a documented Windows 11 \
+setting under Display, Graphics. The registry value behind it comes from community documentation. \
+Only this one entry is changed, and other graphics preferences stored beside it are kept.\
+"""
+danger = 0
+evidence = "Community"
+effect = "app"
+risks = ["A rare game may misbehave. Windows has a per-app opt-out in Graphics settings."]
+undo_note = "Restores this entry alone, leaving the others beside it untouched."
+
+[tweak.applicability]
+build = ">=22000"
+
+[[tweak.sources]]
+url = "https://support.microsoft.com/en-us/article/3f006843-2c7e-4ed0-9a5e-f9389e535952"
+retrieved = "2026-11-04"
+claim = "Documents the feature for DX10 and DX11 games."
+
+[[tweak.sources]]
+url = "https://winhance.net/docs/features/optimizations/gaming-performance.html"
+retrieved = "2026-11-05"
+claim = "An open source tool's documentation gives SwapEffectUpgradeEnable inside DirectXUserGlobalSettings."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_kv_string"
+scope = "user"
+path = 'Software\Microsoft\DirectX\UserGpuPreferences'
+name = "DirectXUserGlobalSettings"
+key = "SwapEffectUpgradeEnable"
+desired = 1

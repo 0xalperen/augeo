@@ -1,0 +1,44 @@
+# Component: memory. Numbers are permanent.
+
+[[tweak]]
+id = "memory-default-policies"
+component = "memory"
+number = 1
+title = "Restore default memory policies"
+summary = """
+Old guides set LargeSystemCache and DisablePagingExecutive. There's no evidence either helps games: \
+LargeSystemCache is a server setting, and Microsoft treats DisablePagingExecutive as a temporary \
+setting for tracing. This repair puts both back to the default of 0.\
+"""
+kind = "repair"
+danger = 1
+evidence = "Community"
+effect = "restart"
+risks = ["None known. Windows ships with these values."]
+undo_note = "Restores your previous values. Takes effect after a restart."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/preparing-the-environment"
+retrieved = "2026-11-05"
+claim = "DisablePagingExecutive=1 is set temporarily for tracing, then returned to 0."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "machine"
+path = 'SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management'
+name = "LargeSystemCache"
+type = "dword"
+desired = 0
+accept_absent = true
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "machine"
+path = 'SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management'
+name = "DisablePagingExecutive"
+type = "dword"
+desired = 0
+accept_absent = true

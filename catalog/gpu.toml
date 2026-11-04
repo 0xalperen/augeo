@@ -1,0 +1,206 @@
+# Component: gpu. Global NVIDIA settings. Numbers are permanent.
+
+[[tweak]]
+id = "gpu-low-latency-on"
+component = "gpu"
+number = 1
+title = "Low Latency Mode: On"
+summary = """
+Limits the queue of frames waiting for the GPU to one, which NVIDIA documents as Low Latency Mode On. \
+It helps GPU-bound DX9 and DX11 games. In DX12 and Vulkan the game decides for itself, and Reflex \
+overrides it where a game has Reflex. This is not Ultra: driver 610.88 rejects the setting IDs known \
+for Ultra.\
+"""
+danger = 1
+evidence = "Documented"
+effect = "app"
+preset = true
+risks = ["Average FPS can drop slightly in some games, in exchange for lower latency."]
+undo_note = "Removes the setting from the global profile, or restores your previous value."
+
+[tweak.applicability]
+gpu = "nvidia"
+
+[[tweak.sources]]
+url = "https://www.nvidia.com/en-us/geforce/news/gamescom-2019-game-ready-driver/"
+retrieved = "2026-11-05"
+claim = "Low Latency Mode On limits queued frames to 1, and it applies to DX9 and DX11."
+
+[[tweak.sources]]
+url = "https://raw.githubusercontent.com/NVIDIA/nvapi/main/NvApiDriverSettings.h"
+retrieved = "2026-11-04"
+claim = "PRERENDERLIMIT is the public setting ID."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "drs_setting"
+profile = "base"
+setting = 0x007BA09E
+id_source = "public"
+desired = 1
+
+[[tweak]]
+id = "gpu-vsync-with-gsync"
+component = "gpu"
+number = 2
+title = "G-SYNC recipe: driver V-Sync on"
+summary = """
+With G-SYNC active, driver V-Sync stops tearing at the top of the refresh range without the usual \
+V-Sync latency, as long as frames stay below refresh. Pair it with a frame cap, and turn V-Sync off \
+in games. Only offered when G-SYNC is active, because without it this adds a lot of latency. NVIDIA \
+says it only works for fullscreen apps.\
+"""
+danger = 1
+evidence = "Documented"
+effect = "app"
+preset = true
+risks = ["Adds noticeable latency if G-SYNC is later turned off. augeo reports when it stops applying."]
+undo_note = "Removes the setting from the global profile, or restores your previous value."
+
+[tweak.applicability]
+gpu = "nvidia"
+vrr = true
+
+[[tweak.sources]]
+url = "https://www.nvidia.com/en-us/geforce/guides/system-latency-optimization-guide/"
+retrieved = "2026-11-05"
+claim = "NVIDIA recommends G-SYNC with V-Sync, plus Reflex or Ultra."
+
+[[tweak.sources]]
+url = "https://www.blurbusters.com/gsync/gsync101-input-lag-tests-and-settings/14/"
+retrieved = "2026-11-05"
+claim = "G-SYNC, driver V-Sync on, in-game V-Sync off, and a cap below refresh. Read from a search extract only, because the site blocks fetching."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "drs_setting"
+profile = "base"
+setting = 0x00A879CF
+id_source = "public"
+desired = 0x47814940
+
+[[tweak]]
+id = "gpu-frame-cap"
+component = "gpu"
+number = 3
+title = "Global frame cap"
+summary = """
+Caps every game a little below your refresh rate, which keeps G-SYNC in range and avoids the latency \
+of a full GPU queue. An in-game cap is better where a game has one: in one test the in-game cap had \
+better 1% lows than the driver's (102.7 vs 92.3) at similar latency. That test is one game on one \
+system, so check yours with the benchmark. Prefer the per-game version.\
+"""
+danger = 1
+evidence = "Measured"
+effect = "app"
+risks = ["Caps FPS in everything, including games where you might want more."]
+undo_note = "Removes the cap, or restores your previous value."
+
+[tweak.applicability]
+gpu = "nvidia"
+
+[[tweak.sources]]
+url = "https://wccftech.com/how-fps-limiters-impact-gameplay-a-guide/"
+retrieved = "2026-11-05"
+claim = "Driver cap 19 ms with 92.3 FPS 1% lows, in-game cap 20 ms with 102.7. V-Sync without a cap was about 52 ms."
+measured = { hw = "RTX 4090, Cyberpunk 2077, 120 Hz", n = 3, effect = "About 19 ms against 52 ms for V-Sync, in one game" }
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "drs_setting"
+profile = "base"
+setting = 0x10835002
+id_source = "public"
+desired = { computed = "frame_cap_from_refresh" }
+
+[[tweak]]
+id = "gpu-shader-cache-unlimited"
+component = "gpu"
+number = 4
+title = "Unlimited shader cache"
+summary = """
+Lets the driver keep more compiled shaders on disk, so large games rebuild them less often. It's \
+widely recommended but there are no controlled measurements behind it, so it's labelled as such.\
+"""
+danger = 0
+evidence = "Community"
+effect = "app"
+risks = ["Uses more disk space over time."]
+undo_note = "Removes the setting, or restores your previous value. Cached files stay until the driver clears them."
+
+[tweak.applicability]
+gpu = "nvidia"
+
+[[tweak.sources]]
+url = "https://raw.githubusercontent.com/valleyofdoom/PC-Tuning/main/docs/configure-nvidia.md"
+retrieved = "2026-11-04"
+claim = "Recommends a larger shader cache, without data."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "drs_setting"
+profile = "base"
+setting = 0x00AC8497
+id_source = "public"
+desired = 0xFFFFFFFF
+
+[[tweak]]
+id = "gpu-hags"
+component = "gpu"
+number = 5
+title = "Hardware-accelerated GPU scheduling"
+summary = """
+Lets the GPU manage its own memory scheduling. DLSS Frame Generation requires it. No credible study \
+shows a latency gain either way, so measure your own games. Microsoft's Settings app is the supported \
+way to change it, and this registry value isn't officially documented. A missing value doesn't \
+necessarily mean off.\
+"""
+danger = 1
+evidence = "Community"
+effect = "restart"
+risks = [
+    "Turning it off disables DLSS Frame Generation.",
+    "PresentMon's GPU figures read about 0.5 ms high with it on, which matters when comparing runs.",
+]
+undo_note = "Restores the previous value, or removes it if it didn't exist. Takes effect after a restart."
+
+[tweak.applicability]
+gpu = "nvidia"
+
+[[tweak.option]]
+key = "on"
+name = "On"
+recommended = true
+
+[[tweak.option]]
+key = "off"
+name = "Off"
+
+[[tweak.sources]]
+url = "https://devblogs.microsoft.com/directx/hardware-accelerated-gpu-scheduling/"
+retrieved = "2026-11-04"
+claim = "Describes the feature and the Settings path. It doesn't document the registry value."
+
+[[tweak.sources]]
+url = "https://winhance.net/docs/features/optimizations/gaming-performance.html"
+retrieved = "2026-11-05"
+claim = "An open source tool's documentation gives HwSchMode 2 for on and 1 for off."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "machine"
+path = 'SYSTEM\CurrentControlSet\Control\GraphicsDrivers'
+name = "HwSchMode"
+type = "dword"
+desired = { by_option = { on = 2, off = 1 } }

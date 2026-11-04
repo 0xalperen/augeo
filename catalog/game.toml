@@ -1,0 +1,113 @@
+# Component: game. Per-game NVIDIA settings. The number belongs to the template, not a game.
+# Visibility-affecting settings are excluded on principle: a game's developers have sanctioned players
+# for those through Profile Inspector.
+
+[[tweak]]
+id = "game-frame-cap"
+component = "game"
+number = 1
+title = "Frame cap for this game"
+summary = """
+Caps one game a little below your refresh rate. An in-game cap is better if the game has one: in one \
+test it had better 1% lows than the driver's. This is for games without a usable cap of their own.\
+"""
+danger = 1
+evidence = "Measured"
+effect = "app"
+risks = ["Caps FPS in this game until undone."]
+undo_note = "Removes the setting from this game's profile. A profile augeo created is removed once empty."
+
+[tweak.applicability]
+gpu = "nvidia"
+
+[[tweak.sources]]
+url = "https://wccftech.com/how-fps-limiters-impact-gameplay-a-guide/"
+retrieved = "2026-11-05"
+claim = "Driver cap 19 ms with 92.3 FPS 1% lows, in-game cap 20 ms with 102.7."
+measured = { hw = "RTX 4090, Cyberpunk 2077, 120 Hz", n = 3, effect = "About 19 ms against 52 ms for V-Sync, in one game" }
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "drs_setting"
+profile = "{exe}"
+setting = 0x10835002
+id_source = "public"
+desired = { computed = "frame_cap_from_refresh" }
+
+[[tweak]]
+id = "game-low-latency-on"
+component = "game"
+number = 2
+title = "Low Latency Mode On for this game"
+summary = """
+Limits queued frames to one for this game only. It helps GPU-bound DX9 and DX11 games. DX12 and \
+Vulkan games decide for themselves, and Reflex overrides it. This isn't Ultra.\
+"""
+danger = 1
+evidence = "Documented"
+effect = "app"
+risks = ["Average FPS can drop slightly, in exchange for lower latency."]
+undo_note = "Removes the setting from this game's profile. A profile augeo created is removed once empty."
+
+[tweak.applicability]
+gpu = "nvidia"
+
+[[tweak.sources]]
+url = "https://www.nvidia.com/en-us/geforce/news/gamescom-2019-game-ready-driver/"
+retrieved = "2026-11-05"
+claim = "Low Latency Mode On limits queued frames to 1, and it applies to DX9 and DX11."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "drs_setting"
+profile = "{exe}"
+setting = 0x007BA09E
+id_source = "public"
+desired = 1
+
+[[tweak]]
+id = "game-prefer-max-performance"
+component = "game"
+number = 3
+title = "Prefer maximum performance for this game"
+summary = """
+Keeps the GPU at higher clocks while this game runs. NVIDIA says it can reduce latency in CPU-bound \
+cases. Setting it per game avoids the idle power cost of the global version. Be aware that NVIDIA's \
+recent driver notes list a known issue where this setting may not apply correctly. augeo can confirm \
+the value was stored, but not that the driver honours it.\
+"""
+danger = 1
+evidence = "Documented"
+effect = "app"
+risks = [
+    "More power and heat while this game runs.",
+    "May silently have no effect on current drivers, per NVIDIA's known-issues list.",
+]
+undo_note = "Removes the setting from this game's profile. A profile augeo created is removed once empty."
+
+[tweak.applicability]
+gpu = "nvidia"
+
+[[tweak.sources]]
+url = "https://www.nvidia.com/en-us/geforce/news/reflex-low-latency-platform/"
+retrieved = "2026-11-05"
+claim = "Prefer Maximum Performance can reduce latency in CPU-bound cases, at higher power."
+
+[[tweak.sources]]
+url = "https://mixed-news.com/en/?p=35845"
+retrieved = "2026-11-05"
+claim = "A secondary report that the known issue is still listed for driver 617.42."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "drs_setting"
+profile = "{exe}"
+setting = 0x1057EB71
+id_source = "public"
+desired = 1

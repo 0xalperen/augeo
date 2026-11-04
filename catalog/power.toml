@@ -1,0 +1,148 @@
+# Component: power. Numbers are permanent.
+
+[[tweak]]
+id = "power-high-performance"
+component = "power"
+number = 1
+title = "High Performance power plan"
+summary = """
+Keeps cores awake and clocks up. Sources disagree here: Bitsum favours avoiding core parking, while \
+AMD and Intel staff lean towards Balanced, and no controlled gaming test was found. So it isn't in \
+the preset. Try it with the benchmark. Your exact current plan is restored on undo.\
+"""
+danger = 1
+evidence = "Community"
+effect = "now"
+conflicts = ["power-balanced-x3d"]
+risks = ["More power use and heat at idle."]
+undo_note = "Selects the exact power plan you had before."
+
+[tweak.applicability]
+chassis = "desktop"
+cpu_layout = "not_dual_ccd_x3d"
+
+[[tweak.sources]]
+url = "https://community.intel.com/t5/Mobile-and-Desktop-Processors/Balanced-vs-High-Performance-Power-Plan-Better-Input-Latency-on/m-p/1701955"
+retrieved = "2026-11-04"
+claim = "Intel staff suggest Balanced may help, without data."
+
+[[tweak.sources]]
+url = "https://bitsum.com/parkcontrol/"
+retrieved = "2026-11-04"
+claim = "Bitsum favours disabling core parking."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "power_active_scheme"
+scheme = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+
+[[tweak]]
+id = "power-balanced-x3d"
+component = "power"
+number = 2
+title = "Balanced power plan for dual-die X3D"
+summary = """
+On AMD X3D chips with two core dies, such as the 9950X3D, core parking keeps games on the die with \
+the extra cache, and reviews report that AMD says this needs the Balanced plan. High Performance can \
+defeat it. AMD's own wording wasn't found directly, so this rests on those reviews.\
+"""
+kind = "repair"
+danger = 0
+evidence = "Community"
+effect = "now"
+conflicts = ["power-high-performance"]
+risks = ["None known for these CPUs."]
+undo_note = "Selects the exact power plan you had before."
+
+[tweak.applicability]
+cpu_layout = "dual_ccd_x3d"
+
+[[tweak.sources]]
+url = "https://www.notebookcheck.net/AMD-Ryzen-9-9950X3D-Review-Ryzen-7-9800X3D-levels-of-gaming-performance-and-power-efficiency-for-50-markup-over-the-Ryzen-9-9950X.976049.0.html"
+retrieved = "2026-11-05"
+claim = "Attributes the Balanced plan and Game Bar requirement to AMD."
+
+[[tweak.sources]]
+url = "https://hwbusters.com/cpu/amd-ryzen-9-9950x3d-cpu-review-the-top-multi-core-gaming-processor/13/"
+retrieved = "2026-11-04"
+claim = "Core parking is how games stay on the cache die, and plan changes can break it."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "power_active_scheme"
+scheme = "381b4222-f694-41f0-9685-ff5bb260df2e"
+
+[[tweak]]
+id = "power-usb-suspend-off"
+component = "power"
+number = 3
+title = "USB selective suspend off"
+summary = """
+Stops Windows putting idle USB devices to sleep. It mostly helps with devices that disconnect or lag \
+on waking. Nobody has measured a gaming latency benefit. Applies to the current power plan, when \
+plugged in.\
+"""
+danger = 0
+evidence = "Experimental"
+effect = "now"
+risks = ["Slightly more power use."]
+undo_note = "Restores the previous value on the same power plan."
+
+[tweak.applicability]
+chassis = "desktop"
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/troubleshoot/microsoftteams/teams-rooms-and-devices/usb-selective-suspend-status-unhealthy"
+retrieved = "2026-11-04"
+claim = "Gives the setting's GUIDs, and that 0 means disabled."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "power_index_ac"
+subgroup = "2a737441-1930-4402-8d77-b2bebba308a3"
+setting = "48e6b7a6-50f5-4782-a5d4-53bb8f07e226"
+desired = 0
+
+[[tweak]]
+id = "power-pcie-aspm-off"
+component = "power"
+number = 4
+title = "PCIe link power saving off"
+summary = """
+Stops PCIe links dropping to a low-power state, which takes time to wake from. PC-Tuning disables \
+it, but without numbers, so treat this as an experiment. The BIOS may have its own setting too. \
+Applies to the current power plan, when plugged in.\
+"""
+danger = 1
+evidence = "Experimental"
+effect = "now"
+risks = ["More power use at idle."]
+undo_note = "Restores the previous value on the same power plan."
+
+[tweak.applicability]
+chassis = "desktop"
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows-hardware/customize/power-settings/pci-express-settings-link-state-power-management"
+retrieved = "2026-11-04"
+claim = "Documents the setting and its values."
+
+[[tweak.sources]]
+url = "https://github.com/valleyofdoom/PC-Tuning"
+retrieved = "2026-11-04"
+claim = "Disables it, without numbers."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "power_index_ac"
+subgroup = "501a4d13-42af-4429-9fd1-a8218c268e20"
+setting = "ee12f906-d277-404b-b6da-e5fa1a576df5"
+desired = 0

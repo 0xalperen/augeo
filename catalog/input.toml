@@ -1,0 +1,49 @@
+# Component: input. Numbers are permanent.
+
+[[tweak]]
+id = "input-mouse-acceleration-off"
+component = "input"
+number = 1
+title = "Mouse acceleration off"
+summary = """
+Turns off Enhance Pointer Precision, so the same hand movement always moves the pointer the same \
+distance. This is about consistency, not latency, and games using raw input ignore it anyway. It's a \
+preference, so it isn't in the preset.\
+"""
+danger = 0
+evidence = "Documented"
+effect = "logoff"
+risks = ["The desktop pointer will feel different until you get used to it."]
+undo_note = "Restores your previous values. Takes effect after signing out."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow"
+retrieved = "2026-11-05"
+claim = "Documents the mouse speed and two thresholds that make up acceleration."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "user"
+path = 'Control Panel\Mouse'
+name = "MouseSpeed"
+type = "sz"
+desired = "0"
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "user"
+path = 'Control Panel\Mouse'
+name = "MouseThreshold1"
+type = "sz"
+desired = "0"
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "user"
+path = 'Control Panel\Mouse'
+name = "MouseThreshold2"
+type = "sz"
+desired = "0"

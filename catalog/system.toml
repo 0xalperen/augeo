@@ -37,3 +37,142 @@ path = 'Software\Microsoft\GameBar'
 name = "AutoGameModeEnabled"
 type = "dword"
 desired = 1
+
+[[tweak]]
+id = "system-game-capture-off"
+component = "system"
+number = 2
+title = "Game capture off"
+summary = """
+Turns off Windows' game recording, which can run in the background. Game Bar itself stays installed, \
+because AMD X3D chips with two dies rely on it. Microsoft documents only a policy for this, so these \
+values come from community sources. They appear to turn capture off broadly, not just background \
+recording. An old Windows 10 test showed better minimum FPS with it off.\
+"""
+danger = 0
+evidence = "Community"
+effect = "now"
+risks = ["Win+Alt+R recording and game clips stop working until undone."]
+undo_note = "Restores your previous values, including removing any that didn't exist."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-applicationmanagement"
+retrieved = "2026-11-05"
+claim = "Documents only the AllowGameDVR policy, not these values."
+
+[[tweak.sources]]
+url = "https://raw.githubusercontent.com/valleyofdoom/PC-Tuning/main/docs/registry-opts.md"
+retrieved = "2026-11-04"
+claim = "Gives AppCaptureEnabled and GameDVR_Enabled."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "user"
+path = 'Software\Microsoft\Windows\CurrentVersion\GameDVR'
+name = "AppCaptureEnabled"
+type = "dword"
+desired = 0
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "user"
+path = 'System\GameConfigStore'
+name = "GameDVR_Enabled"
+type = "dword"
+desired = 0
+
+[[tweak]]
+id = "system-mmcss-default"
+component = "system"
+number = 3
+title = "Restore the MMCSS default"
+summary = """
+Guides often set SystemResponsiveness to 0 for "more CPU in games". Microsoft says values below 10 \
+are clamped to 20 anyway, so that does nothing, and setting 100 turns the service off entirely. This \
+repair puts back 20, the value shown in Microsoft's documentation.\
+"""
+kind = "repair"
+danger = 1
+evidence = "Documented"
+effect = "restart"
+preset = true
+risks = ["None known."]
+undo_note = "Restores your previous value. Takes effect after a restart."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows/win32/procthread/multimedia-class-scheduler-service"
+retrieved = "2026-11-04"
+claim = "Below 10 or above 100 clamps to 20, and 100 disables MMCSS."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "machine"
+path = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
+name = "SystemResponsiveness"
+type = "dword"
+desired = 20
+accept_absent = true
+
+[[tweak]]
+id = "system-memory-integrity-off"
+component = "system"
+number = 4
+title = "Memory Integrity off"
+summary = """
+One of the few measured gains: in one 14-game test at 720p, turning it off gained about 6% average \
+FPS and about 8% in 1% lows, varying from a small loss to over 12% by game. That was a 5800X, a \
+CPU-bound test, so gains at higher resolutions are smaller. It also removes a real protection against \
+kernel attacks. It's never part of a preset, and most people should leave it on.\
+"""
+danger = 4
+evidence = "Measured"
+effect = "restart"
+security_lowering = true
+risks = [
+    "LOWERS SECURITY: it protects Windows' kernel against malicious code and vulnerable drivers.",
+    "Vanguard and FACEIT may refuse to run with it off, so those games may not start.",
+    "Windows Security will show a warning.",
+    "Windows updates may turn it back on. augeo reports that as changed externally.",
+    "If a UEFI lock or a policy manages it, this has no effect after restarting. Check after you restart.",
+]
+undo_note = "Restores your previous value. Takes effect after a restart."
+
+[[tweak.anticheat]]
+system = "vanguard"
+stance = "known-issue"
+source = "https://support.riotgames.com/en-us/riot/performance/vanguard-security-requirements"
+note = "Riot says Vanguard may require Memory Integrity."
+
+[[tweak.anticheat]]
+system = "faceit"
+stance = "known-issue"
+source = "https://support.faceit.com/hc/en-us/articles/27611617036188-CS2-Anti-Cheat-Measures-ENC"
+note = "FACEIT requires VBS and IOMMU for some players, such as those above 3000 ELO."
+
+[[tweak.sources]]
+url = "https://www.computerbase.de/2023-03/windows-11-vbs-hvci-spiele-benchmarks/"
+retrieved = "2026-11-05"
+claim = "Average 151.0 to 142.0 FPS with HVCI on, 1% lows 100.7 to 92.9. Range +1.4% to -12.3% by game."
+measured = { hw = "Ryzen 7 5800X, RX 7900 XTX, 720p", n = 14, effect = "About 6% average FPS and 8% 1% lows, over 14 games" }
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows/security/hardware-security/enable-virtualization-based-protection-of-code-integrity"
+retrieved = "2026-11-05"
+claim = "Documents the registry value, and that CPUs without MBEC or GMET take a bigger hit."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "machine"
+path = 'SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity'
+name = "Enabled"
+type = "dword"
+desired = 0

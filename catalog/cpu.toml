@@ -48,3 +48,48 @@ element = "disabledynamictick"
 [[tweak.rev.resource]]
 kind = "bcd_element"
 element = "tscsyncpolicy"
+
+[[tweak]]
+id = "cpu-global-timer-requests"
+component = "cpu"
+number = 2
+title = "Let timer requests apply system-wide"
+summary = """
+Since Windows 10 2004, a program's timer request only affects that program. This value brings back \
+the system-wide behaviour on Windows 11. On its own it does nothing: a program still has to request \
+a higher resolution, such as augeo's timer tool. It has measured benefits for sleep precision, but \
+no measured gaming latency benefit, and its name comes from community research, not Microsoft.\
+"""
+danger = 2
+evidence = "Experimental"
+effect = "restart"
+risks = [
+    "Microsoft warns that high timer resolution costs power and can hurt overall performance.",
+    "Undocumented: a Windows update could change or remove it.",
+    "Windows 11 doesn't guarantee high resolution for minimized or hidden windows.",
+]
+undo_note = "Restores the previous value, or removes it if it didn't exist. Takes effect after a restart."
+
+[tweak.applicability]
+build = ">=22000"
+
+[[tweak.sources]]
+url = "https://github.com/valleyofdoom/TimerResolution"
+retrieved = "2026-11-05"
+claim = "Describes GlobalTimerResolutionRequests, noted there as for debugging."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod"
+retrieved = "2026-11-04"
+claim = "Timer requests have been per-process since Windows 10 2004, and raising resolution has a cost."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "machine"
+path = 'SYSTEM\CurrentControlSet\Control\Session Manager\kernel'
+name = "GlobalTimerResolutionRequests"
+type = "dword"
+desired = 1

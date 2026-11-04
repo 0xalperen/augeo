@@ -1,0 +1,111 @@
+# Component: network. Numbers are permanent. Adapter tweaks apply to wired physical adapters only.
+
+[[tweak]]
+id = "network-interrupt-moderation-off"
+component = "network"
+number = 1
+title = "Interrupt moderation off"
+summary = """
+Makes the network adapter interrupt the CPU per packet rather than batching. In one test this \
+shortened DPCs at heavy TCP load, but that wasn't game traffic, so any benefit in games is unproven. \
+It also raises CPU use under network load.\
+"""
+danger = 2
+evidence = "Measured"
+effect = "adapter"
+risks = [
+    "The network adapter restarts, which drops your connection for a few seconds.",
+    "Higher CPU use during heavy downloads.",
+]
+undo_note = "Restores the previous value and restarts the adapter again."
+
+[[tweak.sources]]
+url = "https://raw.githubusercontent.com/djdallmann/GamingPCSetup/master/CONTENT/RESEARCH/NETWORK/README.md"
+retrieved = "2026-11-04"
+claim = "At 900 Mbps TCP, off gave 2.65M interrupts with 85% of DPCs at 2 microseconds or less. Medium gave 180k, with 34% at 16 or less."
+measured = { hw = "Intel CT adapter, Windows 10 1909", n = 1, effect = "Shorter DPCs at heavy TCP load, not game traffic" }
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows-hardware/drivers/network/enumeration-keywords"
+retrieved = "2026-11-04"
+claim = "Documents the *InterruptModeration keyword."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "nic_property"
+keyword = "*InterruptModeration"
+desired = "0"
+
+[[tweak]]
+id = "network-eee-off"
+component = "network"
+number = 2
+title = "Energy Efficient Ethernet off"
+summary = """
+Stops the link dropping to a low-power state between packets, which takes time to wake from. The \
+setting is documented, but nobody has measured a gaming benefit, so treat this as an experiment. \
+Adapters that don't offer the setting show as unavailable.\
+"""
+danger = 1
+evidence = "Experimental"
+effect = "adapter"
+risks = [
+    "The network adapter restarts, which drops your connection for a few seconds.",
+    "Slightly more power use.",
+]
+undo_note = "Restores the previous value and restarts the adapter again."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows-hardware/drivers/network/standardized-inf-keywords-for-power-management"
+retrieved = "2026-11-05"
+claim = "*EEE is the standard keyword: 0 disabled, 1 enabled by default."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "nic_property"
+keyword = "*EEE"
+desired = "0"
+
+[[tweak]]
+id = "network-throttling-default"
+component = "network"
+number = 3
+title = "Restore the network throttling default"
+summary = """
+Many guides set NetworkThrottlingIndex to off to "lower ping". One test showed DPC latency rising \
+when it's off, and it only helps throughput above the limit. This repair puts back the usual default \
+of 10. That default comes from Mark Russinovich's write-up and support articles rather than a current \
+Microsoft reference.\
+"""
+kind = "repair"
+danger = 1
+evidence = "Community"
+effect = "restart"
+risks = ["Very fast transfers while audio or video plays may be limited slightly, as Windows intends."]
+undo_note = "Restores your previous value. Takes effect after a restart."
+
+[[tweak.sources]]
+url = "https://raw.githubusercontent.com/djdallmann/GamingPCSetup/master/CONTENT/RESEARCH/NETWORK/README.md"
+retrieved = "2026-11-04"
+claim = "NDIS.sys DPC latency rises with throttling off. Screenshots only."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/nl-nl/archive/blogs/markrussinovich/vista-multimedia-playback-and-network-throughput"
+retrieved = "2026-11-04"
+claim = "Explains what the throttling mechanism does."
+
+[[tweak.rev]]
+rev = 1
+
+[[tweak.rev.resource]]
+kind = "reg_value"
+scope = "machine"
+path = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
+name = "NetworkThrottlingIndex"
+type = "dword"
+desired = 10
+accept_absent = true
