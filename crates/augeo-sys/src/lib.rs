@@ -4,9 +4,12 @@
 //! one documented API with arguments that are valid for the length of the call.
 
 mod bcd;
+pub mod check;
 pub mod detect;
+pub mod display;
 pub mod elevation;
 pub mod hardening;
+pub mod nic;
 mod nvapi;
 pub mod nvml;
 mod power;
@@ -55,15 +58,19 @@ impl WindowsSystem {
         self.drs.is_some()
     }
 
+    /// Whether G-SYNC or another VRR mode is active on this display. Unknown counts as no, since a
+    /// tweak that adds latency without VRR must only be offered on a real yes.
+    pub fn vrr_active(&self, device: &str) -> bool {
+        self.drs
+            .as_ref()
+            .is_some_and(|drs| drs.vrr_active(device).unwrap_or(false))
+    }
+
     fn drs(&self) -> Result<&Drs, PortError> {
         self.drs
             .as_ref()
             .ok_or_else(|| PortError::NotAvailable("no NVIDIA driver was found".into()))
     }
-}
-
-fn not_yet(address: &Address) -> PortError {
-    PortError::NotAvailable(format!("{address} isn't supported in this build"))
 }
 
 impl System for WindowsSystem {
@@ -89,7 +96,8 @@ impl System for WindowsSystem {
             Address::PowerActiveScheme => power::active_scheme().map(Value::Text),
             Address::Bcd { element } => bcd::read(element),
             Address::Drs { profile, setting } => self.drs()?.read(profile, *setting),
-            other => Err(not_yet(other)),
+            Address::Nic { adapter, keyword } => nic::read(adapter, keyword),
+            Address::DisplayMode { device } => display::read(device),
         }
     }
 
@@ -121,7 +129,8 @@ impl System for WindowsSystem {
                     .ok_or_else(|| PortError::NotAvailable("no NVIDIA driver was found".into()))?;
                 drs.write(profile, *setting, value)
             }
-            other => Err(not_yet(other)),
+            Address::Nic { adapter, keyword } => nic::write(adapter, keyword, value),
+            Address::DisplayMode { device } => display::write(device, value),
         }
     }
 
@@ -132,13 +141,14 @@ impl System for WindowsSystem {
             | Address::PowerAc { .. }
             | Address::PowerDc { .. }
             | Address::PowerActiveScheme
-            | Address::Bcd { .. } => Ok(true),
+            | Address::Bcd { .. }
+            | Address::DisplayMode { .. } => Ok(true),
             // Asks the driver itself, because community-known IDs can vanish in any driver.
             Address::Drs { setting, .. } => match &self.drs {
                 Some(drs) => drs.is_available(*setting),
                 None => Ok(false),
             },
-            _ => Ok(false),
+            Address::Nic { adapter, keyword } => nic::is_available(adapter, keyword),
         }
     }
 }

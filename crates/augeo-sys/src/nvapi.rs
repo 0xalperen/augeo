@@ -110,6 +110,21 @@ const GET_SETTING: u32 = 0x73BF_8338;
 const DELETE_SETTING: u32 = 0xE4A2_6362;
 const GET_BASE: u32 = 0xDA84_66A0;
 const ENUM_AVAILABLE_IDS: u32 = 0xF020_614A;
+const DISPLAY_ID_BY_NAME: u32 = 0xAE45_7190;
+const GET_VRR_INFO: u32 = 0xDF8F_DA57;
+
+/// `NV_GET_VRR_INFO_V1`. The first flag bit says VRR is active on the display.
+#[repr(C)]
+#[derive(Default)]
+struct VrrInfo {
+    version: u32,
+    flags: u32,
+    reserved: [u32; 4],
+}
+
+const _: () = assert!(size_of::<VrrInfo>() == 24);
+const VRR_INFO_VER: u32 = size_of::<VrrInfo>() as u32 | (1 << 16);
+const VRR_ENABLED_BIT: u32 = 1;
 
 const OK: i32 = 0;
 const SETTING_NOT_FOUND: i32 = -160;
@@ -342,6 +357,31 @@ impl Drs {
         )?;
         ids.truncate(count as usize);
         Ok(self.available.get_or_init(|| ids.into_iter().collect()))
+    }
+
+    /// Whether VRR, such as G-SYNC, is active on a display named like `\\.\DISPLAY1`.
+    pub(crate) fn vrr_active(&self, device: &str) -> Result<bool, PortError> {
+        let name = format!("{device}\0");
+        let mut id = 0u32;
+        check(
+            "finding the display",
+            call!(
+                self,
+                DISPLAY_ID_BY_NAME,
+                (*const u8, *mut u32),
+                name.as_ptr(),
+                &mut id
+            ),
+        )?;
+        let mut info = VrrInfo {
+            version: VRR_INFO_VER,
+            ..VrrInfo::default()
+        };
+        check(
+            "reading VRR state",
+            call!(self, GET_VRR_INFO, (u32, *mut VrrInfo), id, &mut info),
+        )?;
+        Ok(info.flags & VRR_ENABLED_BIT != 0)
     }
 
     /// Whether this driver accepts a setting ID. Community-known IDs can vanish in any driver.
