@@ -14,6 +14,7 @@ use ratatui::{
 };
 
 use crate::app::{App, Button, ConfirmState, Hit, Host, Pane, Screen, ScrollArea};
+use crate::bench::{BenchPhase, BenchSession};
 
 const MIN_WIDTH: u16 = 80;
 const MIN_HEIGHT: u16 = 24;
@@ -272,7 +273,68 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             }
             Screen::RestartPrompt => self.draw_restart(frame, area),
             Screen::KeepDisplay { deadline, .. } => self.draw_keep_display(frame, area, deadline),
+            Screen::Bench(session) => self.draw_bench(frame, area, &session),
         }
+    }
+
+    fn draw_bench(&mut self, frame: &mut Frame<'_>, area: Rect, session: &BenchSession) {
+        let [body, buttons] =
+            Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(area);
+        let mut lines = vec![
+            Line::from(format!("Game: {}", session.exe)),
+            Line::from(session.run_line()),
+            Line::from(""),
+        ];
+        match &session.phase {
+            BenchPhase::Prepare => {
+                if session.needs_game_restart() {
+                    lines.push(Line::from(
+                        "This tweak takes effect when the game starts, so restart the game now.",
+                    ));
+                }
+                lines.push(Line::from(
+                    "Get the game to your repeatable scene, then come back and press Enter. You \
+                     then have 10 seconds to switch to the game. A beep marks the start, and \
+                     another the end.",
+                ));
+            }
+            BenchPhase::Countdown { until } => {
+                let left = until
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_secs();
+                lines.push(Line::from(format!(
+                    "Switch to the game now. Starting in {left} seconds."
+                )));
+            }
+            BenchPhase::Capturing => {
+                lines.push(Line::from(
+                    "Capturing. Play the same scene until the second beep.",
+                ));
+            }
+        }
+        if let Some(note) = &session.note {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                note.clone(),
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .block(block("Benchmark", true)),
+            body,
+        );
+        let mut row = ButtonRow::new(buttons);
+        if session.phase == BenchPhase::Prepare {
+            row.add(
+                "Start (Enter)",
+                Button::BenchGo,
+                Style::default().fg(Color::Green),
+            );
+        }
+        row.add("Stop (Esc)", Button::BenchStop, Style::default());
+        row.finish(frame, buttons, &mut self.hits);
     }
 
     fn draw_keep_display(

@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use augeo_bench::{Fingerprint, SavedRun};
 use augeo_catalog::schema::{Status, Tweak, TweakKind};
 use augeo_command::{
     Command, CommandError, Component, DryTarget, Purpose, Target, help_text, parse, resolve,
@@ -35,6 +36,18 @@ pub trait Host {
     fn remember_acceptance(&mut self, text_sha256: &str);
     /// The read-only check report, as lines of text.
     fn check_report(&mut self) -> Vec<String>;
+    /// Starts capturing a game's frames.
+    fn start_capture(&mut self, exe: &str, seconds: u32, id: &str) -> Result<(), String>;
+    /// `None` while capturing, otherwise the capture's CSV text, or why there isn't any.
+    fn poll_capture(&mut self) -> Option<Result<String, String>>;
+    fn cancel_capture(&mut self);
+    /// The conditions a run happens under right now.
+    fn fingerprint(&self, exe: &str) -> Fingerprint;
+    fn save_run(&mut self, run: &SavedRun) -> Result<(), String>;
+    fn list_runs(&self) -> Vec<SavedRun>;
+    /// Signals the start or end of a run, since the user is looking at their game.
+    fn beep(&mut self);
+    fn now_ms(&self) -> u64;
 }
 
 /// How long a new display mode lasts unless the user confirms they can see it.
@@ -168,6 +181,7 @@ pub(crate) enum Screen {
         instance: String,
         deadline: Instant,
     },
+    Bench(Box<crate::bench::BenchSession>),
 }
 
 /// A clickable thing on screen, rebuilt on every draw.
@@ -208,6 +222,8 @@ pub(crate) enum Button {
     Close,
     KeepDisplay,
     RevertDisplay,
+    BenchGo,
+    BenchStop,
 }
 
 /// Regions that scroll under the mouse wheel.
@@ -922,9 +938,7 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             Command::Log => {
                 self.message = Some("Logs are in %ProgramData%\\augeo\\logs.".to_string())
             }
-            Command::Bench(_) => {
-                self.message = Some("The benchmark arrives in a later milestone.".to_string());
-            }
+            Command::Bench(args) => self.run_bench_command(input, &args),
             Command::Timer | Command::Polling => {
                 self.message = Some("This tool arrives in a later milestone.".to_string());
             }
@@ -971,6 +985,8 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                     self.screen = Screen::Confirm(state);
                 }
             }
+            Button::BenchGo => self.bench_start_countdown(Instant::now()),
+            Button::BenchStop => self.bench_cancel(),
             Button::KeepDisplay => {
                 self.screen = Screen::Main;
                 self.message = Some("Keeping the new display mode.".to_string());
@@ -994,6 +1010,7 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
 
     /// Lets time-based things happen. Call this regularly.
     pub fn on_tick(&mut self, now: Instant) {
+        self.bench_tick(now);
         if let Screen::KeepDisplay { instance, deadline } = &self.screen
             && now >= *deadline
         {
@@ -1212,6 +1229,14 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                     lines,
                     scroll,
                 };
+                Flow::Continue
+            }
+            Screen::Bench(_) => {
+                match key.code {
+                    KeyCode::Enter => return self.press_button(Button::BenchGo),
+                    KeyCode::Esc => return self.press_button(Button::BenchStop),
+                    _ => {}
+                }
                 Flow::Continue
             }
             Screen::KeepDisplay { .. } => {

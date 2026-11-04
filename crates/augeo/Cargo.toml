@@ -12,6 +12,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+augeo-bench = { path = "../augeo-bench" }
 augeo-catalog = { path = "../augeo-catalog" }
 augeo-command = { path = "../augeo-command" }
 augeo-engine = { path = "../augeo-engine" }
@@ -21,3 +22,4 @@ augeo-sys = { path = "../augeo-sys" }
 augeo-tui = { path = "../augeo-tui" }
 crossterm = "0.29"
 ratatui = "0.30"
+serde_json = "1.0.154"

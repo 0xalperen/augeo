@@ -1,5 +1,9 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
+use augeo_bench::{Fingerprint, SavedRun};
 use augeo_catalog::Catalog;
 use augeo_engine::{
     Context, Disclaimer, Engine, TweakState,
@@ -27,6 +31,13 @@ struct FakeHost {
     elevations: Vec<String>,
     restarts: u32,
     restore_points: u32,
+    capture_error: Option<String>,
+    captures: u32,
+    cancels: u32,
+    beeps: u32,
+    next_capture: VecDeque<Result<String, String>>,
+    saved: Vec<SavedRun>,
+    display_mode: String,
 }
 
 impl Host for FakeHost {
@@ -41,6 +52,41 @@ impl Host for FakeHost {
     fn restart(&mut self) -> Result<(), String> {
         self.restarts += 1;
         Ok(())
+    }
+    fn start_capture(&mut self, _exe: &str, _seconds: u32, _id: &str) -> Result<(), String> {
+        if let Some(error) = &self.capture_error {
+            return Err(error.clone());
+        }
+        self.captures += 1;
+        Ok(())
+    }
+    fn poll_capture(&mut self) -> Option<Result<String, String>> {
+        self.next_capture.pop_front()
+    }
+    fn cancel_capture(&mut self) {
+        self.cancels += 1;
+    }
+    fn fingerprint(&self, exe: &str) -> Fingerprint {
+        Fingerprint {
+            exe: exe.to_string(),
+            windows_build: 26100,
+            driver: Some("610.88".into()),
+            display_mode: Some(self.display_mode.clone()),
+            power_scheme: Some("x".into()),
+        }
+    }
+    fn save_run(&mut self, run: &SavedRun) -> Result<(), String> {
+        self.saved.push(run.clone());
+        Ok(())
+    }
+    fn list_runs(&self) -> Vec<SavedRun> {
+        self.saved.clone()
+    }
+    fn beep(&mut self) {
+        self.beeps += 1;
+    }
+    fn now_ms(&self) -> u64 {
+        1_700_000_000_000
     }
     fn check_report(&mut self) -> Vec<String> {
         vec!["[LOOK] RAM speed (best guess)".to_string()]
@@ -1111,6 +1157,191 @@ fn the_myths_screen_lists_reasons() {
     let text = rig.text();
     assert!(text.contains("Some myth"));
     assert!(text.contains("It does nothing useful at all."));
+}
+
+/// A capture at a steady frame time, with a little per-run spread from `ms`.
+fn capture_csv(exe: &str, ms: f64) -> String {
+    let mut text = String::from("Application,TimeInMs,MsBetweenPresents,PresentMode\n");
+    text.push_str(&format!("{exe},0,{ms},Hardware: Independent Flip\n"));
+    for i in 0..1000 {
+        // Some frames are slower, so a run isn't pinned flat.
+        let frame = if i % 20 == 0 { ms * 2.0 } else { ms };
+        text.push_str(&format!(
+            "{exe},{},{frame},Hardware: Independent Flip\n",
+            6000 + i
+        ));
+    }
+    text
+}
+
+impl Rig {
+    fn bench_rig() -> Self {
+        let mut rig = Self::main();
+        rig.app.host.display_mode = "2560x1440@240".into();
+        rig.command("auge!game game.exe");
+        rig
+    }
+
+    /// Plays one whole run: start it, let the countdown pass, then finish capture with this result.
+    fn play_run(&mut self, result: Result<String, String>) {
+        self.key(KeyCode::Enter);
+        let later = Instant::now() + Duration::from_secs(11);
+        self.app.on_tick(later);
+        self.app.host.next_capture.push_back(result);
+        self.app.on_tick(later);
+        self.draw();
+    }
+}
+
+#[test]
+fn a_benchmark_needs_a_game_elevation_and_no_pending_restart() {
+    let mut rig = Rig::main();
+    rig.command("auge!bench start");
+    assert!(rig.text().contains("Pick a game first"));
+    assert!(rig.screen_is_main());
+
+    let mut rig = Rig::with(true, false, None, (140, 40));
+    rig.command("auge!bench start");
+    assert!(rig.text().contains("Elevation needed"));
+}
+
+#[test]
+fn a_series_records_its_runs_with_beeps_and_saves_them() {
+    let mut rig = Rig::bench_rig();
+    rig.command("auge!bench start");
+    assert!(rig.text().contains("Run 1 of 5"));
+    assert!(rig.text().contains("repeatable scene"));
+    for _ in 0..5 {
+        rig.play_run(Ok(capture_csv("game.exe", 10.0)));
+    }
+    assert_eq!(rig.app.host.saved.len(), 5);
+    assert_eq!(rig.app.host.captures, 5);
+    assert_eq!(rig.app.host.beeps, 10);
+    let text = rig.text();
+    assert!(text.contains("Saved as series"), "{text}");
+    assert!(text.contains("Run 5:"), "{text}");
+}
+
+#[test]
+fn a_bad_run_is_repeated_rather_than_counted() {
+    let mut rig = Rig::bench_rig();
+    rig.command("auge!bench start");
+    rig.play_run(Err(
+        "No frames arrived in time. Was game.exe running?".into()
+    ));
+    assert!(rig.text().contains("That run didn't count"));
+    assert!(rig.text().contains("Run 1 of 5"));
+    assert!(rig.app.host.saved.is_empty());
+
+    rig.play_run(Ok(String::from("Application\nnothing")));
+    assert!(rig.text().contains("That run didn't count"));
+    assert!(rig.app.host.saved.is_empty());
+}
+
+#[test]
+fn a_missing_presentmon_stops_cleanly_with_the_reason() {
+    let mut rig = Rig::bench_rig();
+    rig.app.host.capture_error = Some("PresentMon wasn't found.".into());
+    rig.command("auge!bench start");
+    rig.key(KeyCode::Enter);
+    rig.app.on_tick(Instant::now() + Duration::from_secs(11));
+    assert!(rig.screen_is_main());
+    assert!(rig.text().contains("PresentMon wasn't found."));
+}
+
+#[test]
+fn the_noise_floor_changes_nothing_and_says_what_it_means() {
+    let mut rig = Rig::bench_rig();
+    rig.command("auge!bench aa");
+    assert!(rig.text().contains("Run 1 of 6"));
+    for _ in 0..6 {
+        rig.play_run(Ok(capture_csv("game.exe", 10.0)));
+    }
+    let text = rig.text();
+    assert!(text.contains("any difference is noise"), "{text}");
+    assert!(text.contains("no detectable effect"), "{text}");
+    assert!(!text.contains("IMPROVED"), "{text}");
+    assert!(rig.world.writes().is_empty());
+}
+
+#[test]
+fn an_ab_test_switches_the_tweak_in_abba_order_and_ends_where_it_began() {
+    let mut rig = Rig::bench_rig();
+    rig.command("auge!bench ab system#1");
+    assert!(rig.text().contains("is OFF"));
+    assert_eq!(rig.value("Safe"), Value::Absent);
+
+    // A B B A A B B A, where "on" really is faster.
+    let order = [false, true, true, false, false, true, true, false];
+    for (i, on) in order.iter().enumerate() {
+        assert_eq!(rig.value("Safe") == Value::Dword(1), *on, "run {i}");
+        let spread = i as f64 * 0.001;
+        let ms = if *on { 10.0 } else { 12.0 } + spread;
+        rig.play_run(Ok(capture_csv("game.exe", ms)));
+    }
+    let text = rig.text();
+    assert!(text.contains("off vs on"), "{text}");
+    assert!(text.contains("IMPROVED"), "{text}");
+    assert!(text.contains("The tweak is off again"), "{text}");
+    assert_eq!(rig.value("Safe"), Value::Absent);
+    assert!(rig.app.engine.ledger().applied.is_empty());
+    assert_eq!(rig.app.host.saved.len(), 8);
+}
+
+#[test]
+fn stopping_an_ab_test_puts_the_tweak_back() {
+    let mut rig = Rig::bench_rig();
+    rig.command("auge!bench ab system#1");
+    rig.play_run(Ok(capture_csv("game.exe", 10.0)));
+    assert_eq!(rig.value("Safe"), Value::Dword(1));
+    rig.key(KeyCode::Esc);
+    assert!(rig.screen_is_main());
+    assert_eq!(rig.value("Safe"), Value::Absent);
+    assert_eq!(rig.app.host.cancels, 1);
+}
+
+#[test]
+fn risky_tweaks_cannot_be_ab_tested_automatically() {
+    let mut rig = Rig::bench_rig();
+    rig.command("auge!bench ab system#2");
+    assert!(rig.text().contains("only takes level 1"));
+    assert!(rig.screen_is_main());
+    assert!(rig.world.writes().is_empty());
+
+    rig.command("auge!bench ab system#1,2");
+    assert!(rig.text().contains("one tweak at a time"));
+}
+
+#[test]
+fn comparing_series_refuses_different_conditions() {
+    let mut rig = Rig::bench_rig();
+    rig.command("auge!bench start");
+    for _ in 0..5 {
+        rig.play_run(Ok(capture_csv("game.exe", 10.0)));
+    }
+    rig.key(KeyCode::Esc);
+    let first = rig.app.host.saved[0].series.clone();
+    assert!(rig.text().contains("Press / to type"));
+
+    // The same series ID can't be used twice in this fake, so rewrite one for the second series.
+    let mut other = rig.app.host.saved.clone();
+    for run in &mut other {
+        run.series = "second".into();
+        run.fingerprint.display_mode = Some("1920x1080@60".into());
+    }
+    rig.app.host.saved.extend(other);
+
+    rig.command(&format!("auge!bench compare {first} second"));
+    let text = rig.text();
+    assert!(text.contains("can't be fairly compared"), "{text}");
+    assert!(text.contains("display mode"), "{text}");
+    rig.key(KeyCode::Esc);
+
+    rig.command(&format!("auge!bench compare {first} nope"));
+    assert!(rig.text().contains("No saved series called nope"));
+
+    rig.command("auge!bench list");
+    assert!(rig.text().contains(&first));
 }
 
 #[test]

@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod app;
+mod bench;
 mod view;
 
 pub use app::{App, Flow, Host, Reopen};

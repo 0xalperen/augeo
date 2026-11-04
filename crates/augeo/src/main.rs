@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use augeo_bench::{Fingerprint, SavedRun};
 use augeo_catalog::{Catalog, schema::Status};
 use augeo_command::{Command, Component, help_text, parse};
 use augeo_engine::{
@@ -21,7 +22,7 @@ use augeo_ports::{Address, Clock, System, Value};
 use augeo_sys::{
     FileStore, WindowsSystem, check, detect, display,
     elevation::{self, Elevation},
-    nic, nvml, restore,
+    nic, nvml, presentmon, restore,
     restore::RestorePoint,
     state_dir,
 };
@@ -65,10 +66,89 @@ fn local_config_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("augeo"))
 }
 
-#[derive(Debug)]
-struct RealHost;
+#[derive(Debug, Default)]
+struct RealHost {
+    capture: Option<(presentmon::Capture, String)>,
+}
+
+fn runs_dir() -> Result<PathBuf, String> {
+    Ok(state_dir::location()
+        .map_err(|e| e.to_string())?
+        .join("runs"))
+}
 
 impl Host for RealHost {
+    fn start_capture(&mut self, exe: &str, seconds: u32, id: &str) -> Result<(), String> {
+        let dir = state_dir::location().map_err(|e| e.to_string())?;
+        let tool = presentmon::prepare(&dir)?;
+        let runs = runs_dir()?;
+        std::fs::create_dir_all(&runs).map_err(|e| e.to_string())?;
+        let capture = presentmon::start(&tool, exe, seconds, &runs.join(format!("{id}.csv")))?;
+        self.capture = Some((capture, exe.to_string()));
+        Ok(())
+    }
+
+    fn poll_capture(&mut self) -> Option<Result<String, String>> {
+        let (capture, exe) = self.capture.as_mut()?;
+        let result = capture.poll(exe)?;
+        self.capture = None;
+        Some(result)
+    }
+
+    fn cancel_capture(&mut self) {
+        // Dropping a capture stops PresentMon.
+        self.capture = None;
+    }
+
+    fn fingerprint(&self, exe: &str) -> Fingerprint {
+        let system = WindowsSystem::new();
+        Fingerprint {
+            exe: exe.to_string(),
+            windows_build: detect::windows_build().unwrap_or(0),
+            driver: nvml::query().and_then(|g| g.driver),
+            display_mode: display::primary_device()
+                .and_then(|device| display::current_mode(&device).ok())
+                .map(display::Mode::render),
+            power_scheme: match system.read(&Address::PowerActiveScheme) {
+                Ok(Value::Text(scheme)) => Some(scheme),
+                _ => None,
+            },
+        }
+    }
+
+    fn save_run(&mut self, run: &SavedRun) -> Result<(), String> {
+        let runs = runs_dir()?;
+        std::fs::create_dir_all(&runs).map_err(|e| e.to_string())?;
+        let text = serde_json::to_string_pretty(run).map_err(|e| e.to_string())?;
+        std::fs::write(
+            runs.join(format!("{}-{}.json", run.series, run.index)),
+            text,
+        )
+        .map_err(|e| format!("saving the run: {e}"))
+    }
+
+    fn list_runs(&self) -> Vec<SavedRun> {
+        let Some(entries) = runs_dir().ok().and_then(|dir| std::fs::read_dir(dir).ok()) else {
+            return Vec::new();
+        };
+        let mut runs: Vec<SavedRun> = entries
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+            .filter_map(|text| serde_json::from_str(&text).ok())
+            .collect();
+        runs.sort_by_key(|r| (r.time_ms, r.index));
+        runs
+    }
+
+    fn beep(&mut self) {
+        detect::beep();
+    }
+
+    fn now_ms(&self) -> u64 {
+        RealClock.now_ms()
+    }
+
     fn elevate(&mut self, command: &str) -> Result<bool, String> {
         let args: Vec<&str> = if command.is_empty() {
             Vec::new()
@@ -245,7 +325,7 @@ fn run_app(startup_command: Option<String>) -> Result<(), String> {
     let mut app = App::new(
         engine,
         Box::new(open_engine),
-        RealHost,
+        RealHost::default(),
         environment_line(),
         startup_command,
     );
@@ -283,7 +363,7 @@ fn run_headless(line: &str) -> Result<(), String> {
     match command {
         Command::Help(_) => println!("{}", help_text()),
         Command::Check => {
-            for line in RealHost.check_report() {
+            for line in RealHost::default().check_report() {
                 println!("{line}");
             }
         }

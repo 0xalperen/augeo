@@ -20,6 +20,9 @@ Every item must be signed off on real hardware or a VM before a release. CI can'
 - [ ] **Low Latency Mode.** Measure whether `PRERENDERLIMIT=1` lowers latency in a GPU-bound DX11 game. If not, it should leave the preset.
 - [ ] **G-SYNC gate.** Confirm `gpu#2` is offered with G-SYNC active, and disabled without it. The development PC has it inactive and no NVIDIA Control Panel.
 
+- [ ] **Benchmark with a real game.** So far capture was proven on desktop apps and the flow on a simulated capture. Run `auge!bench aa` and `auge!bench ab` in real games, and check the CSV columns, including `MsPCLatency` in a Reflex game, and `FrameType` with frame generation.
+- [ ] **Clean baseline.** Uninstall other tuning tools before baseline runs, since their services can skew results.
+
 ## Hardware not yet covered
 
 State these in the README until tested: Intel hybrid CPUs, AMD X3D CPUs, laptops and Optimus, real Windows 10 with an NVIDIA GPU.
