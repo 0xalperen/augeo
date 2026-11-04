@@ -1,0 +1,132 @@
+# Popular tweaks augeo deliberately doesn't ship, and why. Shown on the Myths screen.
+
+[[myth]]
+name = "SystemResponsiveness = 0"
+reason = "Microsoft says values below 10 are clamped to 20, so this does nothing. A repair restores the default."
+source = "https://learn.microsoft.com/en-us/windows/win32/procthread/multimedia-class-scheduler-service"
+
+[[myth]]
+name = "MMCSS Tasks\\Games values (GPU Priority, SFIO Priority, Clock Rate)"
+reason = "Microsoft says GPU Priority is not yet used and SFIO Priority is not used. Testing found no process using the Games task."
+source = "https://learn.microsoft.com/en-us/windows/win32/procthread/multimedia-class-scheduler-service"
+
+[[myth]]
+name = "NetworkThrottlingIndex off, for lower ping"
+reason = "One test showed DPC latency rising with it off. It only helps throughput above the limit. A repair restores the default."
+source = "https://raw.githubusercontent.com/djdallmann/GamingPCSetup/master/CONTENT/RESEARCH/NETWORK/README.md"
+
+[[myth]]
+name = "useplatformclock, useplatformtick, disabledynamictick, tscsyncpolicy"
+reason = "Microsoft documents these as for debugging only. A repair removes them."
+source = "https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--set"
+
+[[myth]]
+name = "Win32PrioritySeparation values such as 0x2A or 0x16"
+reason = "No controlled frame-time study exists. 0x2A means fixed quanta with the foreground boost ignored, which could hurt, and the usual client default already favours the foreground."
+source = "https://learn.microsoft.com/en-us/previous-versions/cc976120(v=technet.10)"
+
+[[myth]]
+name = "Disabling HPET in Device Manager"
+reason = "Only conflicting forum claims. No controlled result either way."
+
+[[myth]]
+name = "TcpAckFrequency, TCPNoDelay and Nagle tweaks"
+reason = "Microsoft discourages changing them without study, games set TCP_NODELAY themselves where it matters, and many shooters use UDP anyway."
+source = "https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/registry-entry-control-tcp-acknowledgment-behavior"
+
+[[myth]]
+name = "NIC flow control, RSS queues and offload changes"
+reason = "No gaming data. RSS spreads load across CPUs that a game's network traffic doesn't need."
+
+[[myth]]
+name = "Memory compression off"
+reason = "It barely runs when RAM is plentiful and it helps when RAM is scarce, so there's no good case for turning it off."
+
+[[myth]]
+name = "SysMain and Prefetch off"
+reason = "No numbers either way, and they speed up loading on some systems."
+
+[[myth]]
+name = "LargeSystemCache = 1 and DisablePagingExecutive = 1"
+reason = "No evidence for games. LargeSystemCache is a server setting, and Microsoft treats the other as temporary, for tracing. A repair restores the defaults."
+source = "https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/preparing-the-environment"
+
+[[myth]]
+name = "Turning the pagefile off"
+reason = "Hitting the commit limit can cause freezing and crashes, per Microsoft. The check report flags a disabled pagefile."
+source = "https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/introduction-to-the-page-file"
+
+[[myth]]
+name = "NTFS last access and 8.3 names"
+reason = "No game data, and turning off 8.3 names can break old software."
+source = "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-behavior"
+
+[[myth]]
+name = "PowerThrottlingOff"
+reason = "Undocumented, and the supported API is per process. A foreground game isn't throttled anyway."
+source = "https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation"
+
+[[myth]]
+name = "Core parking off (CPMINCORES)"
+reason = "Breaks dual-die X3D CPUs, which depend on it. The High Performance plan already covers other CPUs."
+
+[[myth]]
+name = "Ultimate Performance plan"
+reason = "A 2018 test showed no help over High Performance, and CPU vendor tuning applies only to Balanced-derived plans."
+
+[[myth]]
+name = "disableidle (no CPU C-states)"
+reason = "Hurts boost clocks on modern CPUs, adds heat, and PC-Tuning advises against it for most people."
+source = "https://github.com/valleyofdoom/PC-Tuning"
+
+[[myth]]
+name = "Fast Startup and Hibernation off, for performance"
+reason = "No performance data. Fast Startup is worth knowing about for benchmarking, so the check report mentions uptime."
+
+[[myth]]
+name = "Mouse and keyboard data queue sizes"
+reason = "These only size a buffer. Testing found nothing to gain."
+source = "https://raw.githubusercontent.com/djdallmann/GamingPCSetup/master/CONTENT/RESEARCH/PERIPHERALS/README.md"
+
+[[myth]]
+name = "DisableDynamicPstate (locking the GPU to P0)"
+reason = "Idle heat, a stability warning, and no latency numbers."
+source = "https://raw.githubusercontent.com/djdallmann/GamingPCSetup/master/CONTENT/RESEARCH/WINDRIVERS/README.md"
+
+[[myth]]
+name = "Disabling MPO (OverlayTestMode)"
+reason = "Only ever a fix for flicker, not a gain. Reports on Windows 11 24H2 and later conflict, and one user reports it breaking VRR."
+source = "https://forums.guru3d.com/goto/post?id=6343762"
+
+[[myth]]
+name = "Ultra Low Latency through Profile Inspector IDs"
+reason = "Driver 610.88 rejects the community IDs known for Ultra. augeo uses the documented On setting. Reflex, where a game has it, beats both."
+
+[[myth]]
+name = "Spectre and Meltdown mitigations off"
+reason = "On Zen 4 the defaults beat mitigations off in one test, older CPUs saw small gains, and it removes real protection."
+source = "https://www.phoronix.com/news/AMD-Zen-4-Mitigations-Off"
+
+[[myth]]
+name = "Disabling the hypervisor (hypervisorlaunchtype off)"
+reason = "Breaks VBS requirements in anti-cheats. The measured gain comes from Memory Integrity, which is available separately at level 4."
+
+[[myth]]
+name = "CFG and process mitigations off"
+reason = "No numbers, and it can break programs."
+
+[[myth]]
+name = "ISLC and standby list cleaners"
+reason = "No proof it still matters on current Windows."
+
+[[myth]]
+name = "USB overclocking (hidusbf), RWEverything, BIOS editing tools"
+reason = "These rely on kernel drivers, which augeo never installs. augeo's polling meter tells you what your mouse really reports, so you can set it in the mouse's own software."
+
+[[myth]]
+name = "Debloating and disabling Windows services"
+reason = "No performance basis for games, and tools doing this report broken Bluetooth, Update and Search. augeo v0.1.0 disables no Windows service."
+
+[[myth]]
+name = "Disk cleaners, including shader cache and WinSxS cleaning"
+reason = "No performance basis. Deleting shader caches causes recompile stutter."
