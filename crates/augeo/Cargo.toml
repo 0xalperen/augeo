@@ -10,3 +10,12 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+augeo-sys = { path = "../augeo-sys" }
+
+[dev-dependencies]
+augeo-catalog = { path = "../augeo-catalog" }
+augeo-engine = { path = "../augeo-engine" }
+augeo-journal = { path = "../augeo-journal" }
+augeo-ports = { path = "../augeo-ports" }
