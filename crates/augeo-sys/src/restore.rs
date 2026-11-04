@@ -23,7 +23,8 @@ use windows::{
             Rpc::{RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE},
             Variant::VARIANT,
             Wmi::{
-                IWbemLocator, IWbemServices, WBEM_FLAG_FORWARD_ONLY, WBEM_FLAG_RETURN_IMMEDIATELY,
+                IWbemLocator, IWbemServices, WBEM_E_INVALID_CLASS, WBEM_E_INVALID_NAMESPACE,
+                WBEM_E_NOT_FOUND, WBEM_FLAG_FORWARD_ONLY, WBEM_FLAG_RETURN_IMMEDIATELY,
                 WBEM_INFINITE, WbemLocator,
             },
         },
@@ -88,6 +89,16 @@ impl Drop for Com {
 }
 
 fn wmi_failed(context: &str, e: &windows::core::Error) -> PortError {
+    // Some editions, such as Windows Server, have no System Restore at all.
+    if [
+        WBEM_E_INVALID_CLASS.0,
+        WBEM_E_INVALID_NAMESPACE.0,
+        WBEM_E_NOT_FOUND.0,
+    ]
+    .contains(&e.code().0)
+    {
+        return PortError::NotAvailable("System Restore isn't available on this Windows".into());
+    }
     PortError::Failed(format!("{context}: {e}"))
 }
 
@@ -297,9 +308,16 @@ mod tests {
 
     #[test]
     fn creating_reports_what_really_happened() {
-        match create("augeo test").unwrap() {
-            RestorePoint::Created { sequence } => assert!(sequence > 0),
-            RestorePoint::SkippedRecentExists { .. } | RestorePoint::ProtectionOff => {}
+        // Run only where asked: on a real PC this would create a real restore point. CI runners are
+        // disposable, and Windows Server there has no System Restore, so that must be handled too.
+        if std::env::var_os("CI").is_none() {
+            return;
+        }
+        match create("augeo test") {
+            Ok(RestorePoint::Created { sequence }) => assert!(sequence > 0),
+            Ok(RestorePoint::SkippedRecentExists { .. } | RestorePoint::ProtectionOff)
+            | Err(PortError::NotAvailable(_)) => {}
+            Err(other) => panic!("{other}"),
         }
     }
 }
