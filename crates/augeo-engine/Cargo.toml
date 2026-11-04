@@ -1,0 +1,23 @@
+[package]
+name = "augeo-engine"
+description = "Plans, applies, verifies and reverts tweaks, and recovers from interruptions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+augeo-catalog = { path = "../augeo-catalog" }
+augeo-command = { path = "../augeo-command" }
+augeo-journal = { path = "../augeo-journal" }
+augeo-ports = { path = "../augeo-ports" }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+
+[dev-dependencies]
+augeo-fakes = { path = "../augeo-fakes" }
