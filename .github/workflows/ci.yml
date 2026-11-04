@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The numbering check compares the catalog lock against earlier commits and tags.
+          fetch-depth: 0
+
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+        shell: bash
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Licenses and banned crates
+        run: cargo deny check licenses bans sources
+
+      - name: Security advisories
+        run: cargo audit
+
+      - name: Release build
+        run: cargo build --release --locked -p augeo
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: augeo-dev-${{ github.sha }}
+          path: target/release/augeo.exe
+          if-no-files-found: error
+          retention-days: 14
