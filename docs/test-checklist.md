@@ -10,6 +10,8 @@ Every item must be signed off on real hardware or a VM before a release. CI can'
 - [ ] **Restore points.** Check created, skipped within 24 hours, and System Protection off, on a real machine.
 - [ ] **AltGr keyboard layouts.** Type `auge!cpu#1-3,5` on a layout where `#` needs AltGr.
 - [ ] **Windows 10 conhost.** Keyboard, mouse and resize. So far tested only on Windows 11.
+- [ ] **The real app on both console hosts.** Input was proven with a test program, and the app's logic is tested against a simulated terminal. Nobody has yet used the finished app by keyboard, mouse and command in Windows Terminal and conhost.
+- [ ] **Elevation round trip.** Apply from a read-only window, accept UAC, confirm in the new window, return, and see the state refresh. Also decline UAC. Also elevate with a different administrator's password, and confirm per-user tweaks reach the signed-in user.
 
 ## Hardware not yet covered
 
