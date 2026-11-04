@@ -1,0 +1,15 @@
+[package]
+name = "augeo-fakes"
+description = "In-memory system fakes with fault injection, for tests only"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+augeo-ports = { path = "../augeo-ports" }
