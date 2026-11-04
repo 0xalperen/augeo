@@ -1,0 +1,15 @@
+[package]
+name = "augeo-bench"
+description = "Parses PresentMon captures and compares runs honestly"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }

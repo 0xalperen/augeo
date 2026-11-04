@@ -54,6 +54,7 @@ dependencies = [
 name = "augeo"
 version = "0.1.0"
 dependencies = [
+ "augeo-bench",
  "augeo-catalog",
  "augeo-command",
  "augeo-engine",
@@ -63,6 +64,14 @@ dependencies = [
  "augeo-tui",
  "crossterm",
  "ratatui",
+ "serde_json",
+]
+
+[[package]]
+name = "augeo-bench"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -127,6 +136,7 @@ name = "augeo-sys"
 version = "0.1.0"
 dependencies = [
  "augeo-ports",
+ "sha2 0.11.1",
  "windows",
 ]
 
@@ -134,6 +144,7 @@ dependencies = [
 name = "augeo-tui"
 version = "0.1.0"
 dependencies = [
+ "augeo-bench",
  "augeo-catalog",
  "augeo-command",
  "augeo-engine",
