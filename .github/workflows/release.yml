@@ -1,0 +1,76 @@
+name: Release
+
+# Runs only when a version tag is pushed. Nothing here runs on a normal commit.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  PRESENTMON_URL: https://github.com/GameTechDev/PresentMon/releases/download/v2.6.0/PresentMon-2.6.0-x64.exe
+  PRESENTMON_SHA256: b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+        shell: bash
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Stable tweak numbering
+        run: cargo xtask check-numbering
+
+      - name: Build
+        run: cargo build --release --locked -p augeo
+
+      - name: No network DLLs, and protected against DLL planting
+        run: cargo xtask check-binary target/release/augeo.exe
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          stage="augeo-${version}-windows-x64"
+          mkdir "$stage"
+          cp target/release/augeo.exe LICENSE README.md "$stage/"
+
+          curl --fail --location --silent --show-error --output "$stage/PresentMon-2.6.0-x64.exe" "$PRESENTMON_URL"
+          echo "$PRESENTMON_SHA256  $stage/PresentMon-2.6.0-x64.exe" | sha256sum --check
+          cat > "$stage/THIRD-PARTY.txt" <<'EOF'
+          PresentMon-2.6.0-x64.exe is Intel's PresentMon, unmodified.
+          https://github.com/GameTechDev/PresentMon
+          MIT License, Copyright (C) 2017-2024 Intel Corporation.
+          EOF
+
+          7z a "$stage.zip" "$stage" > /dev/null
+          cp target/release/augeo.exe augeo.exe
+          sha256sum "$stage.zip" augeo.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          echo "STAGE=$stage" >> "$GITHUB_ENV"
+
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            ${{ env.STAGE }}.zip
+            augeo.exe
+
+      - name: Publish as a pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$STAGE.zip" augeo.exe SHA256SUMS.txt \
+            --prerelease --title "$GITHUB_REF_NAME" --generate-notes
