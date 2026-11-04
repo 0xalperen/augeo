@@ -13,6 +13,13 @@ Every item must be signed off on real hardware or a VM before a release. CI can'
 - [ ] **The real app on both console hosts.** Input was proven with a test program, and the app's logic is tested against a simulated terminal. Nobody has yet used the finished app by keyboard, mouse and command in Windows Terminal and conhost.
 - [ ] **Elevation round trip.** Apply from a read-only window, accept UAC, confirm in the new window, return, and see the state refresh. Also decline UAC. Also elevate with a different administrator's password, and confirm per-user tweaks reach the signed-in user.
 
+- [ ] **Every tweak, for real.** Apply, read back, restart if needed, undo, and confirm the value is restored, for each of the 23 non-game tweaks and 3 game tweaks. So far the engine has only been exercised on the real system with test values. Run this in a VM where possible.
+- [ ] **TRIM value.** Confirm `DisableDeleteNotification` matches `fsutil behavior query DisableDeleteNotify`. Microsoft documents the command, not the registry value.
+- [ ] **HAGS value.** Confirm `HwSchMode` 2 and 1 match the Settings toggle. Only community sources give those values.
+- [ ] **Windowed optimizations value.** Confirm `SwapEffectUpgradeEnable` matches the Settings toggle, which is also community-sourced.
+- [ ] **Low Latency Mode.** Measure whether `PRERENDERLIMIT=1` lowers latency in a GPU-bound DX11 game. If not, it should leave the preset.
+- [ ] **G-SYNC gate.** Confirm `gpu#2` is offered with G-SYNC active, and disabled without it. The development PC has it inactive and no NVIDIA Control Panel.
+
 ## Hardware not yet covered
 
 State these in the README until tested: Intel hybrid CPUs, AMD X3D CPUs, laptops and Optimus, real Windows 10 with an NVIDIA GPU.

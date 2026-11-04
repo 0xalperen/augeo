@@ -624,6 +624,14 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
             id: id.clone(),
             reason,
         })?;
+        if targets.is_empty() {
+            return Err(EngineError::NotAvailable {
+                id,
+                reason:
+                    "there's nothing on this PC for it to change, such as a wired network adapter"
+                        .to_string(),
+            });
+        }
 
         let mut steps = Vec::new();
         for target in targets {
@@ -1273,6 +1281,12 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
                     id: id.to_string(),
                     reason,
                 })?;
+                if targets.is_empty() {
+                    return Err(EngineError::NotAvailable {
+                        id: id.to_string(),
+                        reason: "there's nothing on this PC for it to change".to_string(),
+                    });
+                }
                 (targets, params)
             }
         };

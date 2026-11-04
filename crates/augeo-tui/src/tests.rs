@@ -42,6 +42,9 @@ impl Host for FakeHost {
         self.restarts += 1;
         Ok(())
     }
+    fn check_report(&mut self) -> Vec<String> {
+        vec!["[LOOK] RAM speed (best guess)".to_string()]
+    }
     fn locally_accepted(&self, _: &str) -> bool {
         self.accepted
     }
@@ -100,7 +103,31 @@ fn catalog() -> Catalog {
         ),
     ]
     .concat();
-    Catalog::parse(&[("system", &system)]).unwrap()
+    let display = r#"
+[[tweak]]
+id = "refresh"
+component = "display"
+number = 1
+title = "Best refresh"
+summary = "Sets the best refresh."
+kind = "repair"
+danger = 1
+evidence = "Documented"
+effect = "now"
+risks = ["Screen may go dark."]
+undo_note = "Puts it back."
+[[tweak.sources]]
+url = "https://example.com/refresh"
+retrieved = "2026-11-04"
+claim = "Says so."
+[[tweak.rev]]
+rev = 1
+[[tweak.rev.resource]]
+kind = "display_mode"
+mode = "max_refresh"
+"#;
+    let myths = "[[myth]]\nname = \"Some myth\"\nreason = \"It does nothing useful at all.\"\n";
+    Catalog::parse(&[("system", &system), ("display", display), ("myths", myths)]).unwrap()
 }
 
 fn context() -> Context {
@@ -111,6 +138,7 @@ fn context() -> Context {
             laptop: false,
             cpu_vendor: CpuVendor::Amd,
             dual_ccd_x3d: false,
+            vrr_active: false,
         },
         stamp: Stamp {
             boot_id: "b".into(),
@@ -121,8 +149,8 @@ fn context() -> Context {
         user_sid: SID.into(),
         power_scheme: "381b4222-f694-41f0-9685-ff5bb260df2e".into(),
         adapters: vec![],
-        display_device: None,
-        max_display_mode: None,
+        display_device: Some("DISPLAY1".into()),
+        max_display_mode: Some("1920x1080@144".into()),
         frame_cap: None,
         disclaimer: Disclaimer {
             version: disclaimer::VERSION,
@@ -1005,6 +1033,84 @@ fn recovery_can_keep_what_was_done_by_mouse() {
     rig.click_button(Button::Keep);
     assert!(rig.screen_is_main());
     assert_eq!(rig.value("Safe"), Value::Dword(1));
+}
+
+fn display_address() -> Address {
+    Address::DisplayMode {
+        device: "DISPLAY1".into(),
+    }
+}
+
+fn rig_at_keep_display() -> Rig {
+    let world = World::new();
+    world.set(&display_address(), Value::Text("1920x1080@60".into()));
+    let mut rig = Rig::on_world(world, true, true, None, (140, 40));
+    rig.command("auge!display#1");
+    rig.skip_restore_offer();
+    assert!(rig.text().contains("1920x1080@144"));
+    rig.key(KeyCode::Enter);
+    assert!(rig.text().contains("Keep this display mode?"));
+    assert_eq!(
+        rig.world.get(&display_address()),
+        Value::Text("1920x1080@144".into())
+    );
+    rig
+}
+
+#[test]
+fn a_new_display_mode_reverts_by_itself_with_no_answer() {
+    let mut rig = rig_at_keep_display();
+    // Not yet.
+    rig.app.on_tick(Instant::now() + Duration::from_secs(5));
+    assert!(matches!(rig.app.screen, Screen::KeepDisplay { .. }));
+    rig.app.on_tick(Instant::now() + Duration::from_secs(16));
+    assert!(rig.screen_is_main());
+    assert_eq!(
+        rig.world.get(&display_address()),
+        Value::Text("1920x1080@60".into())
+    );
+    assert!(rig.text().contains("put back"));
+}
+
+#[test]
+fn a_new_display_mode_can_be_kept_or_put_back_now() {
+    let mut rig = rig_at_keep_display();
+    rig.key(KeyCode::Enter);
+    rig.app.on_tick(Instant::now() + Duration::from_secs(60));
+    assert_eq!(
+        rig.world.get(&display_address()),
+        Value::Text("1920x1080@144".into())
+    );
+
+    let mut rig = rig_at_keep_display();
+    rig.click_button(Button::RevertDisplay);
+    assert_eq!(
+        rig.world.get(&display_address()),
+        Value::Text("1920x1080@60".into())
+    );
+}
+
+#[test]
+fn the_check_report_includes_the_audit_of_earlier_tweaks() {
+    let world = World::new();
+    world.set(&display_address(), Value::Text("1920x1080@60".into()));
+    let mut rig = Rig::on_world(world, true, true, None, (140, 40));
+    rig.command("auge!check");
+    let text = rig.text();
+    assert!(text.contains("RAM speed"));
+    assert!(text.contains("nothing here changes anything"));
+    assert!(text.contains("these repairs have something to fix"));
+    assert!(text.contains("display#1"));
+    assert!(rig.world.writes().is_empty());
+}
+
+#[test]
+fn the_myths_screen_lists_reasons() {
+    let mut rig = Rig::main();
+    rig.click_button(Button::Myths);
+    let text = rig.text();
+    assert!(text.contains("Some myth"));
+    assert!(text.contains("It does nothing useful at all."));
 }
 
 #[test]

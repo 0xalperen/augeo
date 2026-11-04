@@ -11,7 +11,7 @@ use augeo_command::{
 };
 use augeo_engine::{
     Confirmation, DriftPolicy, Engine, EngineError, InDoubt, Plan, Report, TYPED_EXPERT,
-    TYPED_HIGH, TweakRequest, TweakResult, TweakStatusView, UndoPolicy, disclaimer,
+    TYPED_HIGH, TweakRequest, TweakResult, TweakState, TweakStatusView, UndoPolicy, disclaimer,
 };
 use augeo_journal::{Decision, Op};
 use augeo_ports::{Clock, Store, System};
@@ -33,7 +33,12 @@ pub trait Host {
     /// Whether this user accepted this exact disclaimer before, without elevation.
     fn locally_accepted(&self, text_sha256: &str) -> bool;
     fn remember_acceptance(&mut self, text_sha256: &str);
+    /// The read-only check report, as lines of text.
+    fn check_report(&mut self) -> Vec<String>;
 }
+
+/// How long a new display mode lasts unless the user confirms they can see it.
+pub(crate) const DISPLAY_REVERT_AFTER: Duration = Duration::from_secs(15);
 
 /// Opens a fresh engine, to see what an elevated copy changed.
 pub type Reopen<S, T, C> = Box<dyn Fn() -> Result<Engine<S, T, C>, EngineError>>;
@@ -158,6 +163,11 @@ pub(crate) enum Screen {
         scroll: u16,
     },
     RestartPrompt,
+    /// A new display mode reverts by itself unless confirmed, in case the screen went dark.
+    KeepDisplay {
+        instance: String,
+        deadline: Instant,
+    },
 }
 
 /// A clickable thing on screen, rebuilt on every draw.
@@ -196,6 +206,8 @@ pub(crate) enum Button {
     DriftToggle,
     Restart,
     Close,
+    KeepDisplay,
+    RevertDisplay,
 }
 
 /// Regions that scroll under the mouse wheel.
@@ -596,6 +608,23 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                 self.refresh();
                 self.selected.clear();
                 self.show_report(&report, state.plan.op);
+                // Whatever else happened, a changed display mode must be confirmed or it goes back.
+                let changed_display = state.plan.tweaks.iter().find(|t| {
+                    state.plan.op == Op::Apply
+                        && t.steps.iter().any(|s| {
+                            s.write && matches!(s.address, augeo_ports::Address::DisplayMode { .. })
+                        })
+                        && report
+                            .results
+                            .iter()
+                            .any(|(i, r)| *i == t.instance && *r == TweakResult::Done)
+                });
+                if let Some(tweak) = changed_display {
+                    self.screen = Screen::KeepDisplay {
+                        instance: tweak.instance.clone(),
+                        deadline: Instant::now() + DISPLAY_REVERT_AFTER,
+                    };
+                }
             }
             Err(EngineError::PlanChanged(fresh)) => {
                 self.message = Some(
@@ -685,6 +714,59 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             lines.push("No tweaks here yet.".to_string());
         }
         self.show_text("Status", lines.join("\n"));
+    }
+
+    fn show_check(&mut self) {
+        self.refresh();
+        let mut lines = self.host.check_report();
+        // The audit of harmful earlier tweaks: repairs that have something to fix on this PC.
+        let repairs: Vec<String> = self
+            .engine
+            .catalog()
+            .tweaks
+            .iter()
+            .filter(|t| Self::is_repair(t) && t.status == Status::Active)
+            .filter(|t| self.applicability(t).is_ok())
+            .filter(|t| {
+                matches!(
+                    self.status_of(t),
+                    Some(Ok(view)) if matches!(view.state, TweakState::NotApplied | TweakState::Partial)
+                )
+            })
+            .map(|t| format!("  {}#{}  {}", t.component, t.number, t.title))
+            .collect();
+        lines.push(String::new());
+        if repairs.is_empty() {
+            lines.push(
+                "[ OK ] Earlier tweaks: nothing harmful found that augeo can read.".to_string(),
+            );
+        } else {
+            lines.push("[LOOK] Earlier tweaks: these repairs have something to fix.".to_string());
+            lines.extend(repairs);
+        }
+        if !self.engine.is_writer() {
+            lines.push("       Boot settings can only be read when elevated.".to_string());
+        }
+        self.show_text(
+            "System check (nothing here changes anything)",
+            lines.join("\n"),
+        );
+    }
+
+    fn show_myths(&mut self) {
+        let mut lines = vec![
+            "Popular tweaks augeo deliberately doesn't ship, and why.".to_string(),
+            String::new(),
+        ];
+        for myth in &self.engine.catalog().myths {
+            lines.push(myth.name.clone());
+            lines.push(format!("  {}", myth.reason));
+            if let Some(source) = &myth.source {
+                lines.push(format!("  {source}"));
+            }
+            lines.push(String::new());
+        }
+        self.show_text("Myths", lines.join("\n"));
     }
 
     fn describe(&self, tweak: &Tweak) -> Vec<String> {
@@ -835,12 +917,8 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                 let text = self.host.create_restore_point();
                 self.message = Some(text);
             }
-            Command::Check => {
-                self.message = Some("The check report arrives in a later milestone.".to_string())
-            }
-            Command::Myths => {
-                self.message = Some("The Myths screen arrives in a later milestone.".to_string())
-            }
+            Command::Check => self.show_check(),
+            Command::Myths => self.show_myths(),
             Command::Log => {
                 self.message = Some("Logs are in %ProgramData%\\augeo\\logs.".to_string())
             }
@@ -893,6 +971,16 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                     self.screen = Screen::Confirm(state);
                 }
             }
+            Button::KeepDisplay => {
+                self.screen = Screen::Main;
+                self.message = Some("Keeping the new display mode.".to_string());
+            }
+            Button::RevertDisplay => {
+                if let Screen::KeepDisplay { instance, .. } = &self.screen {
+                    let instance = instance.clone();
+                    self.revert_display(&instance, "The display mode was put back.");
+                }
+            }
             Button::Restart => match self.host.restart() {
                 Ok(()) => return Flow::Quit,
                 Err(e) => {
@@ -902,6 +990,32 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             },
         }
         Flow::Continue
+    }
+
+    /// Lets time-based things happen. Call this regularly.
+    pub fn on_tick(&mut self, now: Instant) {
+        if let Screen::KeepDisplay { instance, deadline } = &self.screen
+            && now >= *deadline
+        {
+            let instance = instance.clone();
+            self.revert_display(
+                &instance,
+                "No answer in time, so the display mode was put back.",
+            );
+        }
+    }
+
+    fn revert_display(&mut self, instance: &str, note: &str) {
+        let outcome = self
+            .engine
+            .plan_undo(&[instance.to_string()], UndoPolicy::default())
+            .and_then(|plan| self.engine.execute(&plan, &Confirmation::default()));
+        self.refresh();
+        self.screen = Screen::Main;
+        self.message = Some(match outcome {
+            Ok(_) => note.to_string(),
+            Err(e) => format!("Putting the display mode back failed: {e}"),
+        });
     }
 
     fn leave_restore_offer(&mut self) {
@@ -1098,6 +1212,18 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                     lines,
                     scroll,
                 };
+                Flow::Continue
+            }
+            Screen::KeepDisplay { .. } => {
+                match key.code {
+                    KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                        return self.press_button(Button::KeepDisplay);
+                    }
+                    KeyCode::Esc | KeyCode::Char('n' | 'N') => {
+                        return self.press_button(Button::RevertDisplay);
+                    }
+                    _ => {}
+                }
                 Flow::Continue
             }
             Screen::RestartPrompt => {

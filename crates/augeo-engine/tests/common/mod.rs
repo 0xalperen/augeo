@@ -136,6 +136,7 @@ pub fn context() -> Context {
             laptop: false,
             cpu_vendor: CpuVendor::Amd,
             dual_ccd_x3d: false,
+            vrr_active: false,
         },
         stamp: Stamp {
             boot_id: "boot-1".into(),

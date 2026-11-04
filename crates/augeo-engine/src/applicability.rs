@@ -20,6 +20,8 @@ pub struct Environment {
     pub laptop: bool,
     pub cpu_vendor: CpuVendor,
     pub dual_ccd_x3d: bool,
+    /// G-SYNC or another VRR mode is active on the primary display.
+    pub vrr_active: bool,
 }
 
 /// `Ok` when the tweak applies, otherwise the reason it doesn't, written for the user.
@@ -53,6 +55,12 @@ pub fn check(rule: &Applicability, env: &Environment) -> Result<(), String> {
         }
         _ => {}
     }
+    if rule.vrr && !env.vrr_active {
+        return Err(
+            "Only when G-SYNC is active on your main display, because it adds latency otherwise."
+                .to_string(),
+        );
+    }
     match rule.cpu_layout {
         CpuLayoutRule::DualCcdX3d if !env.dual_ccd_x3d => {
             Err("Only for AMD X3D CPUs with two core dies.".to_string())
@@ -75,6 +83,7 @@ mod tests {
             laptop: false,
             cpu_vendor: CpuVendor::Amd,
             dual_ccd_x3d: false,
+            vrr_active: false,
         }
     }
 
@@ -167,6 +176,20 @@ mod tests {
         };
         assert_eq!(check(&intel, &intel_env), Ok(()));
         assert!(check(&amd, &intel_env).is_err());
+    }
+
+    #[test]
+    fn vrr_rules() {
+        let needs_vrr = Applicability {
+            vrr: true,
+            ..rule()
+        };
+        assert!(check(&needs_vrr, &env()).unwrap_err().contains("G-SYNC"));
+        let active = Environment {
+            vrr_active: true,
+            ..env()
+        };
+        assert_eq!(check(&needs_vrr, &active), Ok(()));
     }
 
     #[test]

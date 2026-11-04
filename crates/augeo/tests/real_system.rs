@@ -81,6 +81,7 @@ fn context() -> Context {
             laptop: false,
             cpu_vendor: CpuVendor::Other,
             dual_ccd_x3d: false,
+            vrr_active: false,
         },
         stamp: Stamp {
             boot_id: "test".into(),

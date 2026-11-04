@@ -271,7 +271,38 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                 self.draw_text(frame, area, &title, &lines, scroll);
             }
             Screen::RestartPrompt => self.draw_restart(frame, area),
+            Screen::KeepDisplay { deadline, .. } => self.draw_keep_display(frame, area, deadline),
         }
+    }
+
+    fn draw_keep_display(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        deadline: std::time::Instant,
+    ) {
+        let [body, buttons] =
+            Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(area);
+        let left = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .as_secs();
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Can you see this clearly? The display mode goes back by itself in {left} seconds \
+                 unless you keep it."
+            ))
+            .wrap(Wrap { trim: true })
+            .block(block("Keep this display mode?", true)),
+            body,
+        );
+        let mut row = ButtonRow::new(buttons);
+        row.add(
+            "Keep it (Enter)",
+            Button::KeepDisplay,
+            Style::default().fg(Color::Green),
+        );
+        row.add("Put it back (Esc)", Button::RevertDisplay, Style::default());
+        row.finish(frame, buttons, &mut self.hits);
     }
 
     fn draw_disclaimer(&mut self, frame: &mut Frame<'_>, area: Rect, typing: &str) {

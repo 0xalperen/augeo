@@ -19,9 +19,9 @@ use augeo_engine::{
 use augeo_journal::Stamp;
 use augeo_ports::{Address, Clock, System, Value};
 use augeo_sys::{
-    FileStore, WindowsSystem, detect,
+    FileStore, WindowsSystem, check, detect, display,
     elevation::{self, Elevation},
-    nvml, restore,
+    nic, nvml, restore,
     restore::RestorePoint,
     state_dir,
 };
@@ -114,6 +114,24 @@ impl Host for RealHost {
             let _ = std::fs::write(dir.join("accepted-disclaimer.txt"), text_sha256);
         }
     }
+
+    fn check_report(&mut self) -> Vec<String> {
+        // The Gregorian average, which is close enough for "is this BIOS over two years old".
+        let year = 1970 + (RealClock.now_ms() / 31_556_952_000) as i32;
+        let mut lines = Vec::new();
+        for finding in check::report(year) {
+            lines.push(format!(
+                "[{:^4}] {}: {}",
+                finding.verdict.label(),
+                finding.title,
+                finding.detail
+            ));
+            if let Some(advice) = finding.advice {
+                lines.push(format!("       {advice}"));
+            }
+        }
+        lines
+    }
 }
 
 fn windows_label(build: u32) -> String {
@@ -133,6 +151,13 @@ fn build_context(system: &WindowsSystem, gpu: Option<&nvml::GpuInfo>) -> Result<
         // Only tweaks that touch a power plan use this, and those report their own read errors.
         _ => "00000000-0000-0000-0000-000000000000".to_string(),
     };
+    let display_device = display::primary_device();
+    let best_mode = display_device
+        .as_deref()
+        .and_then(|device| display::best_mode(device).ok());
+    let vrr_active = display_device
+        .as_deref()
+        .is_some_and(|device| system.vrr_active(device));
     Ok(Context {
         env: Environment {
             build,
@@ -144,6 +169,7 @@ fn build_context(system: &WindowsSystem, gpu: Option<&nvml::GpuInfo>) -> Result<
                 detect::Vendor::Other => CpuVendor::Other,
             },
             dual_ccd_x3d: detect::is_dual_ccd_x3d(),
+            vrr_active,
         },
         stamp: Stamp {
             boot_id: detect::boot_id(RealClock.now_ms()),
@@ -153,10 +179,10 @@ fn build_context(system: &WindowsSystem, gpu: Option<&nvml::GpuInfo>) -> Result<
         },
         user_sid: elevation::interactive_user_sid().map_err(|e| e.to_string())?,
         power_scheme,
-        adapters: Vec::new(),
-        display_device: None,
-        max_display_mode: None,
-        frame_cap: None,
+        adapters: nic::wired_adapters(),
+        display_device,
+        max_display_mode: best_mode.map(display::Mode::render),
+        frame_cap: best_mode.and_then(|mode| display::frame_cap_for(mode.hz)),
         disclaimer: disclaimer::current(),
     })
 }
@@ -237,6 +263,7 @@ fn run_app(startup_command: Option<String>) -> Result<(), String> {
     let result = (|| -> io::Result<()> {
         let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         loop {
+            app.on_tick(Instant::now());
             terminal.draw(|frame| app.draw(frame))?;
             if event::poll(Duration::from_millis(250))? {
                 let ev = event::read()?;
@@ -255,6 +282,11 @@ fn run_headless(line: &str) -> Result<(), String> {
     let command = parse(line).map_err(|e| e.render(line))?;
     match command {
         Command::Help(_) => println!("{}", help_text()),
+        Command::Check => {
+            for line in RealHost.check_report() {
+                println!("{line}");
+            }
+        }
         Command::Status(only) => {
             let dir = state_dir::location().map_err(|e| e.to_string())?;
             let system = WindowsSystem::new();
