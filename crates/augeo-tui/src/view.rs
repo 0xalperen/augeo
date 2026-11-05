@@ -981,7 +981,7 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                     }),
             };
             let (symbol, state_color) = state_look(&label);
-            let enabled = applicable.is_ok();
+            let enabled = applicable.is_ok() && !matches!(self.status_of(tweak), Some(Err(_)));
 
             // The row's background reaches both edges, so where you are is obvious at a glance.
             let (background, text) = match (selected, focused, hovered) {

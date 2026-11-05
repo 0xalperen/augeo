@@ -34,6 +34,33 @@ fn apply_then_undo_restores_exact_values_including_absent_and_other_types() {
     assert_eq!(world.get(&machine("M3")), Value::Text("old".into()));
 }
 
+/// Found on a real PC: a network setting the driver doesn't offer read as "not applied".
+#[test]
+fn something_the_system_does_not_offer_reads_as_unavailable_rather_than_not_applied() {
+    let world = seeded();
+    world.set_unavailable(&drs_base(100));
+    let e = engine(&world);
+    assert!(matches!(
+        e.status("drs-global", None),
+        Err(EngineError::NotAvailable { .. })
+    ));
+    assert!(matches!(
+        e.plan_apply(&[request("drs-global")]),
+        Err(EngineError::NotAvailable { .. })
+    ));
+    assert!(world.writes().is_empty());
+}
+
+#[test]
+fn something_already_applied_can_still_be_read_and_undone_if_it_later_goes_away() {
+    let world = seeded();
+    let mut e = engine(&world);
+    apply(&mut e, &["drs-global"]);
+    // A driver update can stop listing a setting.
+    world.set_unavailable(&drs_base(100));
+    assert!(e.status("drs-global", None).is_ok());
+}
+
 /// Found on a real PC: `power#1,3` set USB suspend on the plan it was switching away from.
 #[test]
 fn a_batch_that_switches_plans_sets_per_plan_values_on_the_new_plan() {

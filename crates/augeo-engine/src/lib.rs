@@ -1378,6 +1378,17 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
                         reason: "there's nothing on this PC for it to change".to_string(),
                     });
                 }
+                // Planning would refuse this, so "not applied" would wrongly suggest it could be.
+                // Only a clear no counts here. A failed check is left to the reads below to report.
+                if let Some(missing) = targets
+                    .iter()
+                    .find(|t| matches!(self.system.is_available(&t.address), Ok(false)))
+                {
+                    return Err(EngineError::NotAvailable {
+                        id: id.to_string(),
+                        reason: format!("{} doesn't exist on this system", missing.address),
+                    });
+                }
                 (targets, params)
             }
         };

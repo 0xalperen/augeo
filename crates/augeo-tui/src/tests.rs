@@ -1649,6 +1649,27 @@ fn body_scroll(rig: &Rig) -> u16 {
     }
 }
 
+#[test]
+fn something_the_system_does_not_offer_says_so_in_the_list_and_details() {
+    let world = World::new();
+    world.set_unavailable(&Address::Reg {
+        root: RegRoot::Machine,
+        path: r"Software\Test".into(),
+        name: "Safe".into(),
+    });
+    let mut rig = Rig::on_world(world, true, true, None, (140, 40));
+    rig.select_system();
+    let text = rig.text();
+    assert!(text.contains("n/a"), "{text}");
+    assert!(text.contains("isn't available here"), "{text}");
+    assert!(text.contains("doesn't exist on this system"), "{text}");
+
+    rig.key(KeyCode::Char('a'));
+    assert!(rig.screen_is_main());
+    assert!(rig.text().contains("isn't available here"));
+    assert!(rig.world.writes().is_empty());
+}
+
 /// Reported on a real PC: the undo screen kept scrolling long past its last line.
 #[test]
 fn scrolling_stops_at_the_last_line_on_every_screen() {
