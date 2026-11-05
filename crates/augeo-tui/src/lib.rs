@@ -7,9 +7,10 @@
 
 mod app;
 mod bench;
+mod theme;
 mod view;
 
-pub use app::{App, Flow, Host, Reopen};
+pub use app::{App, Flow, Host, POLLING_SECONDS, PollingUpdate, Reopen};
 
 #[cfg(test)]
 mod tests;

@@ -20,7 +20,8 @@ use crossterm::event::{
 use ratatui::{Terminal, backend::TestBackend};
 
 use crate::app::{Button, Hit, Pane, Screen};
-use crate::{App, Flow, Host};
+use crate::theme;
+use crate::{App, Flow, Host, POLLING_SECONDS, PollingUpdate};
 
 const SID: &str = "S-1-5-21-1-2-3-1001";
 
@@ -40,7 +41,8 @@ struct FakeHost {
     display_mode: String,
     timer_holds: Vec<bool>,
     polling_started: bool,
-    polling_result: Option<Vec<String>>,
+    polling_cancelled: bool,
+    polling_update: Option<PollingUpdate>,
     logged: Vec<String>,
 }
 
@@ -102,8 +104,13 @@ impl Host for FakeHost {
     fn start_polling_meter(&mut self) {
         self.polling_started = true;
     }
-    fn poll_polling_meter(&mut self) -> Option<Vec<String>> {
-        self.polling_result.take()
+    fn poll_polling_meter(&mut self) -> PollingUpdate {
+        self.polling_update
+            .take()
+            .unwrap_or(PollingUpdate::NoChange)
+    }
+    fn cancel_polling_meter(&mut self) {
+        self.polling_cancelled = true;
     }
     fn log(&mut self, line: &str) {
         self.logged.push(line.to_string());
@@ -1382,16 +1389,310 @@ fn the_timer_hold_ends_when_the_screen_closes() {
 }
 
 #[test]
-fn the_polling_meter_waits_then_reports() {
+fn the_polling_meter_waits_for_a_click_shows_a_timer_then_reports() {
     let mut rig = Rig::main();
     rig.command("auge!polling");
     assert!(rig.app.host.polling_started);
-    assert!(rig.text().contains("Move your mouse"));
+    assert!(rig.text().contains("Waiting for you"));
     rig.app.on_tick(Instant::now());
-    assert!(matches!(rig.app.screen, Screen::PollingMeter));
-    rig.app.host.polling_result = Some(vec!["About 1000 Hz".to_string()]);
+    assert!(matches!(
+        rig.app.screen,
+        Screen::PollingMeter { since: None }
+    ));
+    assert!(rig.text().contains("Waiting for you"));
+
+    rig.app.host.polling_update = Some(PollingUpdate::Started);
+    rig.app.on_tick(Instant::now());
+    let text = rig.text();
+    assert!(text.contains("Testing"), "{text}");
+    assert!(text.contains(&format!("{POLLING_SECONDS}s left")), "{text}");
+
+    rig.app.host.polling_update = Some(PollingUpdate::Finished(vec!["About 1000 Hz".into()]));
     rig.app.on_tick(Instant::now());
     assert!(rig.text().contains("About 1000 Hz"));
+}
+
+#[test]
+fn the_polling_test_can_be_cancelled_from_either_window() {
+    let mut rig = Rig::main();
+    rig.command("auge!polling");
+    rig.key(KeyCode::Esc);
+    assert!(rig.screen_is_main());
+    assert!(rig.app.host.polling_cancelled);
+
+    let mut rig = Rig::main();
+    rig.command("auge!polling");
+    rig.click_button(Button::PollingCancel);
+    assert!(rig.screen_is_main());
+    assert!(rig.app.host.polling_cancelled);
+
+    let mut rig = Rig::main();
+    rig.command("auge!polling");
+    rig.app.host.polling_update = Some(PollingUpdate::Cancelled);
+    rig.app.on_tick(Instant::now());
+    assert!(rig.screen_is_main());
+    assert!(rig.text().contains("cancelled"));
+}
+
+/// Cells of a row, other than ones that carry their own colour on purpose, such as the danger pill.
+fn row_backgrounds(rig: &mut Rig, y: u16, x: u16, width: u16) -> Vec<ratatui::style::Color> {
+    rig.draw();
+    let buffer = rig.terminal.backend().buffer();
+    (x..x + width)
+        .map(|column| buffer[(column, y)].bg)
+        .collect()
+}
+
+fn hit_rect(rig: &Rig, wanted: &Hit) -> ratatui::layout::Rect {
+    rig.app
+        .hits
+        .iter()
+        .find(|(_, hit)| hit == wanted)
+        .map(|(rect, _)| *rect)
+        .unwrap_or_else(|| panic!("{wanted:?} isn't on screen"))
+}
+
+fn assert_filled(rig: &mut Rig, wanted: &Hit, color: ratatui::style::Color, context: &str) {
+    let rect = hit_rect(rig, wanted);
+    let backgrounds = row_backgrounds(rig, rect.y, rect.x, rect.width);
+    assert!(
+        backgrounds.iter().all(|bg| *bg == color),
+        "{context}: {wanted:?} should be filled with {color:?}, got {backgrounds:?}"
+    );
+    // A tweak's second line is filled too, apart from its danger pill.
+    if rect.height > 1 {
+        let pills: Vec<_> = (0..5).map(theme::danger_color).collect();
+        let backgrounds = row_backgrounds(rig, rect.y + 1, rect.x, rect.width);
+        assert!(
+            backgrounds
+                .iter()
+                .all(|bg| *bg == color || pills.contains(bg)),
+            "{context}: the second line of {wanted:?} has a gap: {backgrounds:?}"
+        );
+    }
+    // Reverse video looked different from terminal to terminal, so it must not be back.
+    let buffer = rig.terminal.backend().buffer();
+    for column in rect.x..rect.x + rect.width {
+        assert!(
+            !buffer[(column, rect.y)]
+                .modifier
+                .contains(ratatui::style::Modifier::REVERSED),
+            "{context}: {wanted:?} uses reverse video"
+        );
+    }
+}
+
+/// The user reported rows that didn't highlight, such as gpu#2, depending on how they got there.
+#[test]
+fn every_selected_row_is_filled_edge_to_edge_however_it_was_reached() {
+    let mut rig = Rig::main();
+    rig.select_system();
+    let count = rig.app.tweaks().len();
+    assert!(count > 1);
+
+    // By keyboard, with the list focused.
+    for index in 0..count {
+        rig.app.pane = Pane::Tweaks;
+        rig.key(KeyCode::Home);
+        for _ in 0..index {
+            rig.key(KeyCode::Down);
+        }
+        assert_eq!(rig.app.tweak, index);
+        assert_filled(&mut rig, &Hit::Tweak(index), theme::IRIS, "keyboard");
+        for other in (0..count).filter(|o| *o != index) {
+            let rect = hit_rect(&rig, &Hit::Tweak(other));
+            let backgrounds = row_backgrounds(&mut rig, rect.y, rect.x, rect.width);
+            assert!(
+                !backgrounds.contains(&theme::IRIS),
+                "row {other} is lit while {index} is selected"
+            );
+        }
+    }
+
+    // By mouse, which also moves focus to the list.
+    for index in (0..count).rev() {
+        rig.click(&Hit::Tweak(index));
+        assert_filled(&mut rig, &Hit::Tweak(index), theme::IRIS, "mouse");
+    }
+
+    // With focus elsewhere it stays visible, just quieter.
+    for pane_key in [KeyCode::BackTab, KeyCode::BackTab] {
+        rig.key(pane_key);
+        assert_filled(&mut rig, &Hit::Tweak(0), theme::SURFACE_HIGH, "unfocused");
+    }
+}
+
+#[test]
+fn the_selected_component_is_always_filled_too() {
+    let mut rig = Rig::main();
+    rig.key(KeyCode::BackTab);
+    assert_eq!(rig.app.pane, Pane::Components);
+    for index in 0..10 {
+        rig.key(KeyCode::Home);
+        for _ in 0..index {
+            rig.key(KeyCode::Down);
+        }
+        assert_filled(&mut rig, &Hit::Component(index), theme::IRIS, "keyboard");
+    }
+    // Focus moves to the list, and the menu's choice stays lit.
+    rig.key(KeyCode::Tab);
+    assert_filled(
+        &mut rig,
+        &Hit::Component(9),
+        theme::SURFACE_HIGH,
+        "unfocused",
+    );
+
+    for index in [3, 0, 7] {
+        rig.click(&Hit::Component(index));
+        assert_filled(&mut rig, &Hit::Component(index), theme::IRIS, "mouse");
+    }
+}
+
+#[test]
+fn hovering_lights_up_what_is_under_the_mouse_without_doing_anything() {
+    let mut rig = Rig::main();
+    rig.select_system();
+    let target = Hit::Tweak(2);
+    let (x, y) = rig.where_is(&target);
+    rig.mouse(MouseEventKind::Moved, x, y);
+    assert_eq!(rig.app.hover, Some(target.clone()));
+    assert_filled(&mut rig, &target, theme::SURFACE, "hover");
+    assert_eq!(rig.app.tweak, 0, "moving the mouse must not select");
+    assert!(rig.screen_is_main());
+
+    let (x, y) = rig.where_is(&Hit::Button(Button::Quit));
+    assert_eq!(rig.mouse(MouseEventKind::Moved, x, y), Flow::Continue);
+    assert_eq!(rig.app.hover, Some(Hit::Button(Button::Quit)));
+}
+
+#[test]
+fn drawing_slows_down_when_nobody_is_looking_or_while_measuring() {
+    let mut rig = Rig::bench_rig();
+    let fast = rig.app.tick_interval();
+    assert!(fast <= Duration::from_millis(100));
+
+    // Behind a game, for example.
+    rig.app.on_event(Event::FocusLost, rig.now);
+    let background = rig.app.tick_interval();
+    assert!(background > fast);
+    rig.app.on_event(Event::FocusGained, rig.now);
+    assert_eq!(rig.app.tick_interval(), fast);
+
+    // A click counts as being looked at, in case a focus event was missed.
+    rig.app.on_event(Event::FocusLost, rig.now);
+    rig.mouse(MouseEventKind::Moved, 1, 1);
+    assert_eq!(rig.app.tick_interval(), fast);
+
+    rig.command("auge!bench start");
+    rig.key(KeyCode::Enter);
+    rig.app.on_tick(Instant::now() + Duration::from_secs(11));
+    assert!(rig.text().contains("Capturing"));
+    assert_eq!(rig.app.tick_interval(), Duration::from_secs(1));
+
+    // The polling test's window is in front, but its timer here should still move.
+    let mut rig = Rig::main();
+    rig.command("auge!polling");
+    rig.app.on_event(Event::FocusLost, rig.now);
+    assert_eq!(rig.app.tick_interval(), fast);
+}
+
+#[test]
+fn animation_follows_time_rather_than_events_and_changes_no_words() {
+    let mut rig = Rig::main();
+    rig.select_system();
+    let before = rig.text();
+    let start = Instant::now();
+    rig.app.on_tick(start + Duration::from_secs(2));
+    let frame = rig.app.frame;
+    assert!(frame >= 30, "{frame}");
+    rig.key(KeyCode::Char('r'));
+    assert_eq!(rig.app.frame, frame, "a key press isn't a frame");
+    rig.key(KeyCode::Esc);
+    // Colours move, but the text on screen doesn't.
+    let after: String = rig.text().replace("State read again.", "");
+    let strip = |text: &str| -> Vec<String> {
+        text.lines()
+            .map(|l| l.chars().filter(|c| c.is_alphanumeric()).collect())
+            .collect()
+    };
+    let (before_rows, after_rows) = (strip(&before), strip(&after));
+    assert!(before_rows.iter().any(|r| r.contains("Titlesafe")));
+    assert!(after_rows.iter().any(|r| r.contains("Titlesafe")));
+}
+
+#[test]
+fn the_command_bar_completes_with_tab_and_shows_what_it_would_add() {
+    let mut rig = Rig::main();
+    rig.key(KeyCode::Char('/'));
+    rig.typed("auge!pol");
+    assert_eq!(rig.app.completion().as_deref(), Some("ling"));
+    assert!(rig.text().contains("auge!polling"));
+    rig.key(KeyCode::Tab);
+    assert_eq!(rig.app.bar, "auge!polling");
+    assert_eq!(rig.app.completion(), None);
+
+    // Nothing to complete means nothing changes.
+    rig.key(KeyCode::Esc);
+    rig.key(KeyCode::Char('/'));
+    rig.typed("nonsense");
+    rig.key(KeyCode::Tab);
+    assert_eq!(rig.app.bar, "nonsense");
+}
+
+/// The cell the command bar's cursor should be on, after this many typed characters.
+fn bar_cell(rig: &mut Rig, typed: u16) -> (String, ratatui::style::Color) {
+    rig.draw();
+    let bar = hit_rect(rig, &Hit::Bar);
+    let cell = &rig.terminal.backend().buffer()[(bar.x + 1 + typed, bar.y + 1)];
+    (cell.symbol().to_string(), cell.bg)
+}
+
+/// The cursor used to sit after the suggestion, away from where typing would really go.
+#[test]
+fn the_command_cursor_stays_right_after_the_typed_text() {
+    let mut rig = Rig::main();
+    rig.key(KeyCode::Char('/'));
+    assert_eq!(bar_cell(&mut rig, 0), ("a".to_string(), theme::IRIS));
+
+    // Over the suggestion's next character, which doesn't move.
+    rig.typed("auge!d");
+    assert_eq!(rig.app.completion().as_deref(), Some("ry "));
+    assert_eq!(bar_cell(&mut rig, 6), ("r".to_string(), theme::IRIS));
+    let (next, background) = bar_cell(&mut rig, 7);
+    assert_eq!(next, "y");
+    assert_ne!(background, theme::IRIS);
+
+    // Deleting brings it back with the text.
+    rig.key(KeyCode::Backspace);
+    let expected = rig.app.completion().unwrap();
+    let first = expected.chars().next().unwrap().to_string();
+    assert_eq!(bar_cell(&mut rig, 5), (first, theme::IRIS));
+
+    // Past anything that could be suggested, it follows the text.
+    rig.typed("zzz");
+    assert_eq!(rig.app.completion(), None);
+    assert_eq!(bar_cell(&mut rig, 8), (" ".to_string(), theme::IRIS));
+
+    // When it blinks off, the suggestion still shows, and nothing moves.
+    rig.key(KeyCode::Esc);
+    rig.key(KeyCode::Char('/'));
+    rig.typed("auge!d");
+    rig.app.frame = 12;
+    let (under, background) = bar_cell(&mut rig, 6);
+    assert_eq!(under, "r");
+    assert_ne!(background, theme::IRIS);
+}
+
+#[test]
+fn counts_of_applied_tweaks_appear_in_the_menu() {
+    let mut rig = Rig::main();
+    rig.command("auge!system#1");
+    rig.skip_restore_offer();
+    rig.key(KeyCode::Enter);
+    rig.key(KeyCode::Esc);
+    assert!(rig.text().contains("1/6"));
+    assert!(rig.text().contains("1 applied"));
 }
 
 #[test]
@@ -1441,4 +1742,179 @@ fn every_screen_fits_the_minimum_size_without_panicking() {
     rig.key(KeyCode::Esc);
     let _ = rig.text();
     assert!(rig.world.writes().is_empty());
+}
+
+/// Writes screens to HTML with their real colours, for looking at without a terminal. It only runs
+/// when asked: `AUGEO_RENDER_DIR=<folder> cargo test -p augeo-tui render_screens -- --ignored`.
+#[test]
+#[ignore = "writes files for a person to look at"]
+fn render_screens_for_review() {
+    use ratatui::style::{Color, Modifier};
+
+    fn css(color: Color, fallback: &str) -> String {
+        match color {
+            Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+            _ => fallback.to_string(),
+        }
+    }
+
+    fn html(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let mut out = String::from("<pre>");
+        for y in 0..buffer.area.height {
+            let mut run = String::new();
+            let mut style = None;
+            for x in 0..buffer.area.width {
+                let cell = &buffer[(x, y)];
+                let bold = cell.modifier.contains(Modifier::BOLD);
+                let current = (cell.fg, cell.bg, bold);
+                if style != Some(current) {
+                    if let Some((fg, bg, bold)) = style {
+                        let weight = if bold { "700" } else { "400" };
+                        out.push_str(&format!(
+                            "<span style=\"color:{};background:{};font-weight:{weight}\">{run}</span>",
+                            css(fg, "#e0def4"),
+                            css(bg, "#191724")
+                        ));
+                    }
+                    run.clear();
+                    style = Some(current);
+                }
+                run.push_str(
+                    &cell
+                        .symbol()
+                        .replace('&', "&amp;")
+                        .replace('<', "&lt;")
+                        .replace('>', "&gt;"),
+                );
+            }
+            if let Some((fg, bg, bold)) = style {
+                let weight = if bold { "700" } else { "400" };
+                out.push_str(&format!(
+                    "<span style=\"color:{};background:{};font-weight:{weight}\">{run}</span>",
+                    css(fg, "#e0def4"),
+                    css(bg, "#191724")
+                ));
+            }
+            out.push('\n');
+        }
+        out.push_str("</pre>");
+        out
+    }
+
+    let Some(dir) = std::env::var_os("AUGEO_RENDER_DIR") else {
+        return;
+    };
+
+    fn real_rig(size: (u16, u16), accepted: bool, writer: bool) -> Rig {
+        let world = World::new();
+        let app = App::new(
+            Engine::open(
+                world.system(),
+                world.store(),
+                world.clock(),
+                Catalog::embedded().unwrap(),
+                context(),
+                writer,
+            )
+            .unwrap(),
+            Box::new(|| panic!("not used here")),
+            FakeHost {
+                accepted,
+                ..FakeHost::default()
+            },
+            "NVIDIA GeForce RTX 4070 SUPER | driver 610.88 | Windows 11 26100 | ? for help"
+                .to_string(),
+            None,
+        );
+        let mut rig = Rig {
+            world,
+            app,
+            terminal: Terminal::new(TestBackend::new(size.0, size.1)).unwrap(),
+            now: Instant::now(),
+        };
+        rig.draw();
+        rig
+    }
+
+    let mut page = String::from(
+        "<!doctype html><meta charset=utf-8><title>augeo screens</title><style>\
+         body{background:#0d0c14;color:#ccc;font-family:sans-serif;margin:24px}\
+         h2{font-size:14px;margin:24px 0 8px}\
+         pre{font-family:'Cascadia Mono',Consolas,monospace;font-size:13px;line-height:1.15;\
+         display:inline-block;margin:0;background:#191724}\
+         </style>",
+    );
+    let mut add = |name: &str, rig: &mut Rig| {
+        rig.draw();
+        page.push_str(&format!("<h2>{name}</h2>{}", html(&rig.terminal)));
+    };
+
+    let mut rig = real_rig((120, 30), false, true);
+    add("First run, 120x30", &mut rig);
+
+    let mut rig = real_rig((120, 30), true, false);
+    rig.command("auge!gpu");
+    rig.key(KeyCode::Down);
+    add(
+        "Main, read-only, gpu#2 selected with the list focused",
+        &mut rig,
+    );
+    rig.key(KeyCode::BackTab);
+    add("The same, with the menu focused", &mut rig);
+    let (x, y) = rig.where_is(&Hit::Button(Button::Check));
+    rig.mouse(MouseEventKind::Moved, x, y);
+    add("Hovering a button", &mut rig);
+    rig.key(KeyCode::Char('/'));
+    rig.typed("auge!pol");
+    add("Typing a command, with completion", &mut rig);
+
+    let mut rig = real_rig((80, 24), true, true);
+    rig.command("auge!system");
+    rig.key(KeyCode::Down);
+    add("Main at the minimum size, 80x24", &mut rig);
+
+    let mut rig = real_rig((120, 30), true, true);
+    rig.command("auge!dry system#1,2");
+    add("Dry run", &mut rig);
+
+    let mut rig = real_rig((120, 30), true, true);
+    rig.command("auge!system#4");
+    rig.skip_restore_offer();
+    rig.typed("I acc");
+    add("Confirming an expert tweak", &mut rig);
+
+    let mut rig = real_rig((120, 30), true, true);
+    rig.command("auge!system#1");
+    add("Restore point offer", &mut rig);
+
+    let mut rig = real_rig((120, 30), true, true);
+    rig.app.host.polling_update = None;
+    rig.command("auge!polling");
+    add("Polling: waiting for the click", &mut rig);
+    rig.app.host.polling_update = Some(PollingUpdate::Started);
+    rig.app.on_tick(Instant::now() - Duration::from_secs(2));
+    rig.app.on_tick(Instant::now());
+    add("Polling: testing", &mut rig);
+
+    let mut rig = real_rig((120, 30), true, true);
+    rig.command("auge!check");
+    add("Check report", &mut rig);
+
+    let mut rig = real_rig((120, 30), true, true);
+    rig.command("auge!myths");
+    add("Myths", &mut rig);
+
+    let mut rig = real_rig((120, 30), true, true);
+    rig.command("auge!game game.exe");
+    rig.command("auge!bench start");
+    add("Benchmark: prepare", &mut rig);
+    rig.key(KeyCode::Enter);
+    add("Benchmark: countdown", &mut rig);
+    rig.app.on_tick(Instant::now() + Duration::from_secs(11));
+    add("Benchmark: capturing", &mut rig);
+
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("screens.html"), page).unwrap();
 }

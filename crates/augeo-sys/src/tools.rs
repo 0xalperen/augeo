@@ -2,24 +2,39 @@
 //! lasts only while this program asks for it and ends by itself when the program exits.
 
 use std::{
+    cell::RefCell,
     ffi::c_void,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, Sender},
+    },
     time::{Duration, Instant},
 };
 
 use windows::{
     Win32::{
         Devices::HumanInterfaceDevice::{HID_USAGE_GENERIC_MOUSE, HID_USAGE_PAGE_GENERIC},
-        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Graphics::Gdi::{
+            BeginPaint, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateFontW, CreateSolidBrush,
+            DEFAULT_CHARSET, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW,
+            EndPaint, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, FillRect, HDC, InvalidateRect,
+            OUT_DEFAULT_PRECIS, PAINTSTRUCT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+        },
         System::LibraryLoader::{GetModuleHandleW, GetProcAddress},
         UI::{
             Input::{
                 GetRawInputData, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RID_INPUT,
-                RIDEV_INPUTSINK, RIM_TYPEMOUSE, RegisterRawInputDevices,
+                RIDEV_REMOVE, RIM_TYPEMOUSE, RegisterRawInputDevices,
             },
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_MESSAGE, MSG, PM_REMOVE,
-                PeekMessageW, RegisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT, WNDCLASSW,
+                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
+                GetMessageW, GetSystemMetrics, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
+                RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNORMAL, SetForegroundWindow,
+                SetTimer, ShowWindow, WM_ACTIVATE, WM_DESTROY, WM_ERASEBKGND, WM_INPUT, WM_KEYDOWN,
+                WM_LBUTTONDOWN, WM_PAINT, WM_TIMER, WNDCLASSW, WS_CAPTION, WS_EX_TOPMOST,
+                WS_OVERLAPPED, WS_SYSMENU,
             },
         },
     },
@@ -139,92 +154,463 @@ pub fn polling_from_times(times_ms: &[f64]) -> Option<Polling> {
     })
 }
 
-extern "system" fn window_proc(window: HWND, message: u32, w: WPARAM, l: LPARAM) -> LRESULT {
-    // SAFETY: this passes along exactly what Windows gave this window procedure.
-    unsafe { DefWindowProcW(window, message, w, l) }
+const METER_CLASS: &str = "augeoPollingMeter";
+const VK_ESCAPE_CODE: usize = 0x1B;
+const METER_TIMER_MS: u32 = 100;
+
+/// What the polling test has done.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MeterEvent {
+    /// The user clicked, and testing began.
+    Started,
+    /// When each report arrived, in milliseconds, or why the test couldn't finish.
+    Finished(Result<Vec<f64>, String>),
+    /// The window was closed.
+    Cancelled,
 }
 
-fn record_mouse_times(seconds: u64) -> Result<Vec<f64>, String> {
-    let class_name = HSTRING::from("augeoPollingMeter");
+/// A running polling test, in a small window of its own.
+///
+/// It has to be a real window the user clicks. Since July 2023, Windows 11 limits raw mouse input to
+/// programs in the background to about 125 messages a second, so a hidden listener reads 125 Hz
+/// whatever the mouse really does. A terminal window belongs to another process, so this one is the
+/// only window of augeo's that can be in front.
+#[derive(Debug)]
+pub struct PollingMeter {
+    events: Receiver<MeterEvent>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl PollingMeter {
+    /// Opens the window. Testing lasts `seconds` from the user's first click inside it.
+    #[must_use]
+    pub fn start(seconds: u64) -> Self {
+        let (send, events) = mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let thread_cancel = Arc::clone(&cancel);
+        // Windows and their messages belong to the thread that made them.
+        std::thread::spawn(move || {
+            if let Err(e) = run_meter_window(seconds, send.clone(), thread_cancel) {
+                let _ = send.send(MeterEvent::Finished(Err(e)));
+            }
+        });
+        Self { events, cancel }
+    }
+
+    /// The next thing that happened, if anything did.
+    #[must_use]
+    pub fn poll(&self) -> Option<MeterEvent> {
+        self.events.try_recv().ok()
+    }
+
+    /// Closes the window, and drops any result.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Drop for PollingMeter {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
+/// A snapshot for painting, so nothing is borrowed while Windows calls back in.
+#[derive(Debug, Clone, Copy)]
+struct MeterView {
+    seconds: u64,
+    elapsed: Option<Duration>,
+    reports_last_second: usize,
+}
+
+#[derive(Debug)]
+struct MeterState {
+    seconds: u64,
+    started: Option<Instant>,
+    times: Vec<f64>,
+    events: Sender<MeterEvent>,
+    cancel: Arc<AtomicBool>,
+    done: bool,
+}
+
+impl MeterState {
+    fn view(&self) -> MeterView {
+        let elapsed = self.started.map(|s| s.elapsed());
+        let now_ms = elapsed.map_or(0.0, |e| e.as_secs_f64() * 1000.0);
+        MeterView {
+            seconds: self.seconds,
+            elapsed,
+            reports_last_second: self
+                .times
+                .iter()
+                .rev()
+                .take_while(|t| **t > now_ms - 1000.0)
+                .count(),
+        }
+    }
+
+    fn finish(&mut self, result: Result<Vec<f64>, String>) {
+        self.done = true;
+        let _ = self.events.send(MeterEvent::Finished(result));
+    }
+
+    /// Whether the window should now close.
+    fn on_timer(&mut self) -> bool {
+        if self.cancel.load(Ordering::Relaxed) {
+            self.done = true;
+            return true;
+        }
+        if self
+            .started
+            .is_some_and(|s| s.elapsed() >= Duration::from_secs(self.seconds))
+        {
+            let times = std::mem::take(&mut self.times);
+            self.finish(Ok(times));
+            return true;
+        }
+        false
+    }
+}
+
+thread_local! {
+    static METER: RefCell<Option<MeterState>> = const { RefCell::new(None) };
+}
+
+/// Windows can call the window procedure again from inside a call it makes, so this must not be held
+/// across anything that sends a message. If it's already held, nothing happens rather than a panic.
+fn with_meter<R>(action: impl FnOnce(&mut MeterState) -> R) -> Option<R> {
+    METER.with(|meter| {
+        meter
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut state| state.as_mut().map(action))
+    })
+}
+
+fn repaint(window: HWND) {
+    // SAFETY: the window is alive, as this runs inside its own window procedure.
+    let _ = unsafe { InvalidateRect(Some(window), None, false) };
+}
+
+fn close(window: HWND) {
+    // SAFETY: the window belongs to this thread, and isn't used after it's destroyed.
+    let _ = unsafe { DestroyWindow(window) };
+}
+
+fn record_report(raw_handle: LPARAM) {
+    let mut raw = RAWINPUT::default();
+    let mut size = size_of::<RAWINPUT>() as u32;
+    // SAFETY: the buffer and size match, and the handle came with this message.
+    let copied = unsafe {
+        GetRawInputData(
+            HRAWINPUT(raw_handle.0 as *mut c_void),
+            RID_INPUT,
+            Some(std::ptr::addr_of_mut!(raw).cast()),
+            &mut size,
+            size_of::<RAWINPUTHEADER>() as u32,
+        )
+    };
+    if copied != u32::MAX && raw.header.dwType == RIM_TYPEMOUSE.0 {
+        with_meter(|m| {
+            if let Some(started) = m.started {
+                m.times.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
+        });
+    }
+}
+
+const fn colour(r: u8, g: u8, b: u8) -> COLORREF {
+    COLORREF(r as u32 | ((g as u32) << 8) | ((b as u32) << 16))
+}
+
+fn fill(dc: HDC, area: &RECT, color: COLORREF) {
+    // SAFETY: the device context is valid while painting, and the brush is ours and freed here.
+    unsafe {
+        let brush = CreateSolidBrush(color);
+        FillRect(dc, area, brush);
+        let _ = DeleteObject(brush.into());
+    }
+}
+
+fn draw_line(dc: HDC, text: &str, area: &RECT, height: i32, semibold: bool, color: COLORREF) {
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let face = HSTRING::from("Segoe UI");
+    let weight = if semibold { FW_SEMIBOLD } else { FW_NORMAL };
+    let mut area = *area;
+    // SAFETY: the device context is valid while painting. The font is selected only for this call,
+    // then the old one is put back and the new one freed. The text buffer outlives the draw.
+    unsafe {
+        let font = CreateFontW(
+            height,
+            0,
+            0,
+            0,
+            weight.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY,
+            FF_DONTCARE.0.into(),
+            &face,
+        );
+        let previous = SelectObject(dc, font.into());
+        SetTextColor(dc, color);
+        DrawTextW(
+            dc,
+            &mut wide,
+            &mut area,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
+        SelectObject(dc, previous);
+        let _ = DeleteObject(font.into());
+    }
+}
+
+/// The same colours as the terminal screens.
+fn paint_meter(window: HWND, view: MeterView) {
+    const BASE: COLORREF = colour(25, 23, 36);
+    const TRACK: COLORREF = colour(57, 53, 82);
+    const TEXT: COLORREF = colour(224, 222, 244);
+    const MUTED: COLORREF = colour(144, 140, 170);
+    const IRIS: COLORREF = colour(196, 167, 231);
+    const PINK: COLORREF = colour(235, 111, 146);
+
+    let mut paint = PAINTSTRUCT::default();
+    let mut client = RECT::default();
+    // SAFETY: this runs while handling this window's WM_PAINT, and both structures are locals.
+    let dc = unsafe {
+        let _ = GetClientRect(window, &mut client);
+        BeginPaint(window, &mut paint)
+    };
+    fill(dc, &client, BASE);
+    // SAFETY: the device context stays valid until EndPaint below.
+    unsafe { SetBkMode(dc, TRANSPARENT) };
+
+    let width = client.right;
+    let line = |top: i32, bottom: i32| RECT {
+        left: 16,
+        top,
+        right: width - 16,
+        bottom,
+    };
+    match view.elapsed {
+        None => {
+            draw_line(dc, "Click here to start", &line(40, 90), 34, true, IRIS);
+            draw_line(
+                dc,
+                &format!(
+                    "Then keep moving your mouse quickly in circles for {} seconds.",
+                    view.seconds
+                ),
+                &line(100, 130),
+                19,
+                false,
+                TEXT,
+            );
+            draw_line(dc, "Esc cancels", &line(150, 180), 16, false, MUTED);
+        }
+        Some(elapsed) => {
+            let total = view.seconds as f64;
+            let left = (total - elapsed.as_secs_f64()).max(0.0).ceil();
+            draw_line(
+                dc,
+                &format!("Testing: keep moving. {left:.0}s left"),
+                &line(30, 80),
+                30,
+                true,
+                PINK,
+            );
+            let bar = line(95, 111);
+            fill(dc, &bar, TRACK);
+            let done = (elapsed.as_secs_f64() / total).clamp(0.0, 1.0);
+            let filled = RECT {
+                right: bar.left + (f64::from(bar.right - bar.left) * done) as i32,
+                ..bar
+            };
+            fill(dc, &filled, IRIS);
+            draw_line(
+                dc,
+                &format!("{} reports in the last second", view.reports_last_second),
+                &line(125, 155),
+                19,
+                false,
+                TEXT,
+            );
+        }
+    }
+    // SAFETY: this pairs with the BeginPaint above.
+    let _ = unsafe { EndPaint(window, &paint) };
+}
+
+extern "system" fn meter_proc(window: HWND, message: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    match message {
+        WM_INPUT => {
+            record_report(l);
+            // Windows needs this to clean up after raw input.
+            // SAFETY: this passes along exactly what Windows gave this window procedure.
+            unsafe { DefWindowProcW(window, message, w, l) }
+        }
+        WM_LBUTTONDOWN => {
+            with_meter(|m| {
+                if m.started.is_none() {
+                    m.started = Some(Instant::now());
+                    let _ = m.events.send(MeterEvent::Started);
+                }
+            });
+            repaint(window);
+            LRESULT(0)
+        }
+        WM_TIMER => {
+            if with_meter(MeterState::on_timer) == Some(true) {
+                close(window);
+            } else {
+                repaint(window);
+            }
+            LRESULT(0)
+        }
+        // Losing focus would bring the background limit back, so the numbers couldn't be trusted.
+        WM_ACTIVATE if w.0 & 0xFFFF == 0 => {
+            let abandoned = with_meter(|m| {
+                let testing = m.started.is_some() && !m.done;
+                if testing {
+                    m.finish(Err(
+                        "The test window lost focus, so the result couldn't be trusted. Please \
+                         try again, and keep the window in front."
+                            .to_string(),
+                    ));
+                }
+                testing
+            });
+            if abandoned == Some(true) {
+                close(window);
+            }
+            LRESULT(0)
+        }
+        WM_KEYDOWN if w.0 == VK_ESCAPE_CODE => {
+            close(window);
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            if let Some(view) = with_meter(|m| m.view()) {
+                paint_meter(window, view);
+            }
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            with_meter(|m| {
+                if !m.done {
+                    m.done = true;
+                    let _ = m.events.send(MeterEvent::Cancelled);
+                }
+            });
+            let device = RAWINPUTDEVICE {
+                usUsagePage: HID_USAGE_PAGE_GENERIC,
+                usUsage: HID_USAGE_GENERIC_MOUSE,
+                dwFlags: RIDEV_REMOVE,
+                hwndTarget: HWND::default(),
+            };
+            // SAFETY: the device array outlives the call, and its size is passed correctly. Quitting
+            // only posts a message to this thread's own loop.
+            unsafe {
+                let _ = RegisterRawInputDevices(&[device], size_of::<RAWINPUTDEVICE>() as u32);
+                PostQuitMessage(0);
+            }
+            LRESULT(0)
+        }
+        // SAFETY: this passes along exactly what Windows gave this window procedure.
+        _ => unsafe { DefWindowProcW(window, message, w, l) },
+    }
+}
+
+fn run_meter_window(
+    seconds: u64,
+    events: Sender<MeterEvent>,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), String> {
+    const WIDTH: i32 = 560;
+    const HEIGHT: i32 = 240;
+
+    METER.with(|meter| {
+        *meter.borrow_mut() = Some(MeterState {
+            seconds,
+            started: None,
+            times: Vec::new(),
+            events,
+            cancel,
+            done: false,
+        });
+    });
+
+    let class_name = HSTRING::from(METER_CLASS);
+    let title = HSTRING::from("augeo: mouse polling test");
+    // SAFETY: a null name asks for this program's own module, which stays loaded.
+    let module = unsafe { GetModuleHandleW(None) }.map_err(|e| e.to_string())?;
     let class = WNDCLASSW {
-        lpfnWndProc: Some(window_proc),
+        lpfnWndProc: Some(meter_proc),
+        hInstance: module.into(),
+        // SAFETY: this loads a cursor every Windows has, shared by the whole system.
+        hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
         lpszClassName: PCWSTR(class_name.as_ptr()),
         ..Default::default()
     };
     // SAFETY: the class structure and its name outlive the call. Registering twice just fails, and
     // creating the window below still works with the first registration.
     unsafe { RegisterClassW(&class) };
-    // SAFETY: a message-only window with the class registered above. No parameters are passed.
+    // SAFETY: these only read the size of the screen.
+    let (screen_width, screen_height) =
+        unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    // SAFETY: the class was registered above, and no parameters are passed through the pointer.
+    // It stays on top, because Windows may open a background program's window behind the terminal.
     let window = unsafe {
         CreateWindowExW(
-            WINDOW_EX_STYLE(0),
+            WS_EX_TOPMOST,
             &class_name,
-            &class_name,
-            WINDOW_STYLE(0),
-            0,
-            0,
-            0,
-            0,
-            Some(HWND_MESSAGE),
+            &title,
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+            (screen_width - WIDTH) / 2,
+            (screen_height - HEIGHT) / 2,
+            WIDTH,
+            HEIGHT,
             None,
             None,
+            Some(module.into()),
             None,
         )
     }
-    .map_err(|e| format!("creating the meter window: {e}"))?;
+    .map_err(|e| format!("opening the test window: {e}"))?;
 
     let device = RAWINPUTDEVICE {
         usUsagePage: HID_USAGE_PAGE_GENERIC,
         usUsage: HID_USAGE_GENERIC_MOUSE,
-        dwFlags: RIDEV_INPUTSINK,
+        dwFlags: Default::default(),
         hwndTarget: window,
     };
     // SAFETY: the device array outlives the call, and its size is passed correctly.
-    unsafe { RegisterRawInputDevices(&[device], size_of::<RAWINPUTDEVICE>() as u32) }
-        .map_err(|e| format!("listening to the mouse: {e}"))?;
-
-    let start = Instant::now();
-    let end = start + Duration::from_secs(seconds);
-    let mut times = Vec::new();
-    let mut message = MSG::default();
-    while Instant::now() < end {
-        // SAFETY: `message` is a valid place for the result, and the window is ours.
-        let got = unsafe { PeekMessageW(&mut message, Some(window), 0, 0, PM_REMOVE) };
-        if !got.as_bool() {
-            std::thread::sleep(Duration::from_micros(100));
-            continue;
-        }
-        if message.message != WM_INPUT {
-            continue;
-        }
-        let mut raw = RAWINPUT::default();
-        let mut size = size_of::<RAWINPUT>() as u32;
-        // SAFETY: the buffer and size match, and the handle came with this message.
-        let copied = unsafe {
-            GetRawInputData(
-                HRAWINPUT(message.lParam.0 as *mut c_void),
-                RID_INPUT,
-                Some(std::ptr::addr_of_mut!(raw).cast()),
-                &mut size,
-                size_of::<RAWINPUTHEADER>() as u32,
-            )
-        };
-        if copied != u32::MAX && raw.header.dwType == RIM_TYPEMOUSE.0 {
-            times.push(start.elapsed().as_secs_f64() * 1000.0);
-        }
+    if let Err(e) =
+        unsafe { RegisterRawInputDevices(&[device], size_of::<RAWINPUTDEVICE>() as u32) }
+    {
+        close(window);
+        return Err(format!("listening to the mouse: {e}"));
     }
-    // SAFETY: the window is ours and is no longer used.
-    let _ = unsafe { DestroyWindow(window) };
-    Ok(times)
-}
+    // SAFETY: the window belongs to this thread. Whether Windows lets it come to the front doesn't
+    // matter, since the click that starts the test does that anyway.
+    unsafe {
+        let _ = ShowWindow(window, SW_SHOWNORMAL);
+        let _ = SetForegroundWindow(window);
+        SetTimer(Some(window), 1, METER_TIMER_MS, None);
+    }
 
-/// Starts measuring on its own thread, because raw input needs a message loop.
-pub fn start_polling_meter(seconds: u64) -> Receiver<Result<Vec<f64>, String>> {
-    let (send, receive) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = send.send(record_mouse_times(seconds));
-    });
-    receive
+    let mut message = MSG::default();
+    // SAFETY: `message` is a valid place for the result. The loop ends when the window is destroyed.
+    while unsafe { GetMessageW(&mut message, None, 0, 0) }.as_bool() {
+        // SAFETY: the message came from GetMessageW just above.
+        unsafe { DispatchMessageW(&message) };
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -279,6 +665,90 @@ mod tests {
         // A mouse barely moved over a long time.
         let sparse: Vec<f64> = (0..20).map(|i| f64::from(i) * 500.0).collect();
         assert_eq!(polling_from_times(&sparse), None);
+    }
+
+    /// Only one test window at a time, since they're found by class name.
+    static WINDOWS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn find_meter_window() -> HWND {
+        let class = HSTRING::from(METER_CLASS);
+        for _ in 0..500 {
+            // SAFETY: the class name outlives the call.
+            if let Ok(window) = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::FindWindowW(&class, PCWSTR::null())
+            } {
+                return window;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the test window never opened");
+    }
+
+    fn next_event(meter: &PollingMeter) -> MeterEvent {
+        for _ in 0..1000 {
+            if let Some(event) = meter.poll() {
+                return event;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the meter went quiet");
+    }
+
+    #[test]
+    fn the_meter_waits_for_a_click_and_then_runs_for_its_time() {
+        let _one_at_a_time = WINDOWS.lock().unwrap();
+        let meter = PollingMeter::start(1);
+        let window = find_meter_window();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(meter.poll(), None, "it must not start by itself");
+
+        let clicked = Instant::now();
+        // SAFETY: the window is alive, and this message carries no pointers.
+        unsafe {
+            windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                Some(window),
+                WM_LBUTTONDOWN,
+                WPARAM(0),
+                LPARAM(0),
+            )
+        }
+        .unwrap();
+        assert_eq!(next_event(&meter), MeterEvent::Started);
+        assert!(matches!(next_event(&meter), MeterEvent::Finished(Ok(_))));
+        assert!(clicked.elapsed() >= Duration::from_secs(1));
+    }
+
+    #[test]
+    fn cancelling_closes_the_window_without_a_result() {
+        let _one_at_a_time = WINDOWS.lock().unwrap();
+        let meter = PollingMeter::start(60);
+        let _ = find_meter_window();
+        meter.cancel();
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(meter.poll(), None);
+        let class = HSTRING::from(METER_CLASS);
+        // SAFETY: the class name outlives the call.
+        let found =
+            unsafe { windows::Win32::UI::WindowsAndMessaging::FindWindowW(&class, PCWSTR::null()) };
+        assert!(found.is_err(), "the window should be gone");
+    }
+
+    #[test]
+    fn closing_the_window_says_so() {
+        let _one_at_a_time = WINDOWS.lock().unwrap();
+        let meter = PollingMeter::start(60);
+        let window = find_meter_window();
+        // SAFETY: the window is alive, and this message carries no pointers.
+        unsafe {
+            windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                Some(window),
+                WM_KEYDOWN,
+                WPARAM(VK_ESCAPE_CODE),
+                LPARAM(0),
+            )
+        }
+        .unwrap();
+        assert_eq!(next_event(&meter), MeterEvent::Cancelled);
     }
 
     #[test]

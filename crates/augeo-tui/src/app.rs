@@ -49,9 +49,11 @@ pub trait Host {
     fn beep(&mut self);
     /// The timer tool's report. With `hold`, asks for high resolution until told otherwise.
     fn timer_report(&mut self, hold: bool) -> Vec<String>;
+    /// Opens the polling test's window. Testing starts when the user clicks inside it.
     fn start_polling_meter(&mut self);
-    /// `None` while measuring, then what was found.
-    fn poll_polling_meter(&mut self) -> Option<Vec<String>>;
+    /// What the polling test has done since the last time this was asked.
+    fn poll_polling_meter(&mut self) -> PollingUpdate;
+    fn cancel_polling_meter(&mut self);
     /// Adds a line to the log file.
     fn log(&mut self, line: &str);
     /// The end of the log file.
@@ -59,8 +61,63 @@ pub trait Host {
     fn now_ms(&self) -> u64;
 }
 
+/// What the polling test has done.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PollingUpdate {
+    NoChange,
+    /// The user clicked, and testing began.
+    Started,
+    Finished(Vec<String>),
+    /// The test window was closed.
+    Cancelled,
+}
+
 /// How long a new display mode lasts unless the user confirms they can see it.
 pub(crate) const DISPLAY_REVERT_AFTER: Duration = Duration::from_secs(15);
+/// How long the polling test lasts once it starts.
+pub const POLLING_SECONDS: u64 = 5;
+/// How fast animations advance, and how often the screen updates while someone is looking at it.
+const FRAME: Duration = Duration::from_millis(50);
+/// With another window in front, such as a game, there's no reason to keep drawing quickly.
+const BACKGROUND_TICK: Duration = Duration::from_millis(500);
+/// A benchmark switches screens on time, without needing to look smooth.
+const BENCH_TICK: Duration = Duration::from_millis(250);
+/// While frames are being measured, augeo stays as close to idle as it can.
+const CAPTURE_TICK: Duration = Duration::from_secs(1);
+
+/// What the command bar can complete. Component names and tweak numbers follow the same prefix.
+const COMPLETIONS: [&str; 30] = [
+    "auge!help",
+    "auge!check",
+    "auge!status",
+    "auge!myths",
+    "auge!polling",
+    "auge!timer",
+    "auge!bench",
+    "auge!game ",
+    "auge!dry ",
+    "auge!info ",
+    "auge!undo ",
+    "auge!undo-all",
+    "auge!preset recommended",
+    "auge!restore-point",
+    "auge!elevate",
+    "auge!reboot",
+    "auge!log",
+    "auge!quit",
+    "auge!cpu",
+    "auge!gpu",
+    "auge!display",
+    "auge!input",
+    "auge!network",
+    "auge!memory",
+    "auge!power",
+    "auge!storage",
+    "auge!system",
+    "auge!bench aa",
+    "auge!bench ab ",
+    "auge!bench start",
+];
 
 /// Opens a fresh engine, to see what an elevated copy changed.
 pub type Reopen<S, T, C> = Box<dyn Fn() -> Result<Engine<S, T, C>, EngineError>>;
@@ -195,7 +252,10 @@ pub(crate) enum Screen {
         holding: bool,
         lines: Vec<String>,
     },
-    PollingMeter,
+    /// `since` is empty until the user clicks in the test window.
+    PollingMeter {
+        since: Option<Instant>,
+    },
 }
 
 /// A clickable thing on screen, rebuilt on every draw.
@@ -240,6 +300,7 @@ pub(crate) enum Button {
     BenchStop,
     TimerHold,
     TimerClose,
+    PollingCancel,
 }
 
 /// Regions that scroll under the mouse wheel.
@@ -277,6 +338,15 @@ pub struct App<S, T, C, H> {
     pub(crate) wide: bool,
     pending_command: Option<String>,
     confirm_was_replaced: bool,
+    /// Counts up with time, not with events, so animations run at the same speed whatever happens.
+    pub(crate) frame: u64,
+    started: Instant,
+    /// What the mouse is over.
+    pub(crate) hover: Option<Hit>,
+    /// The frame the tweak list last changed on, for its fade-in.
+    pub(crate) list_changed_at: u64,
+    /// Whether this terminal window is the one in front.
+    focused: bool,
 }
 
 impl<S, T, C, H> std::fmt::Debug for App<S, T, C, H> {
@@ -333,6 +403,11 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             wide: true,
             pending_command: startup_command,
             confirm_was_replaced: false,
+            frame: 0,
+            started: Instant::now(),
+            hover: None,
+            list_changed_at: 0,
+            focused: true,
         };
         app.refresh();
         app.enter_first_screen();
@@ -411,6 +486,47 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             .count()
     }
 
+    /// How many of a component's tweaks augeo has applied.
+    pub(crate) fn applied_count(&self, component: Component) -> usize {
+        self.engine
+            .ledger()
+            .applied
+            .keys()
+            .filter(|instance| {
+                let id = instance.split('@').next().unwrap_or(instance);
+                self.engine
+                    .catalog()
+                    .tweaks
+                    .iter()
+                    .any(|t| t.id == id && t.component == component)
+            })
+            .count()
+    }
+
+    /// The rest of the first command that starts with what's typed so far.
+    pub(crate) fn completion(&self) -> Option<String> {
+        let typed = self.bar.to_lowercase();
+        COMPLETIONS
+            .iter()
+            .find(|c| c.starts_with(&typed) && c.len() > typed.len())
+            .map(|c| c[typed.len()..].to_string())
+    }
+
+    /// How long the main loop may wait before the next tick.
+    #[must_use]
+    pub fn tick_interval(&self) -> Duration {
+        match &self.screen {
+            Screen::Bench(session) => match session.phase {
+                crate::bench::BenchPhase::Capturing { .. } => CAPTURE_TICK,
+                _ => BENCH_TICK,
+            },
+            // The test window is in front during this, and this screen's timer should still run.
+            Screen::PollingMeter { .. } => FRAME,
+            _ if self.focused => FRAME,
+            _ => BACKGROUND_TICK,
+        }
+    }
+
     pub(crate) fn highlighted(&self) -> Option<&Tweak> {
         self.tweaks().get(self.tweak).copied()
     }
@@ -456,6 +572,7 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
         self.tweak = 0;
         self.tweak_scroll = 0;
         self.detail_scroll = 0;
+        self.list_changed_at = self.frame;
     }
 
     fn select_tweak(&mut self, index: usize) {
@@ -972,7 +1089,7 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             }
             Command::Polling => {
                 self.host.start_polling_meter();
-                self.screen = Screen::PollingMeter;
+                self.screen = Screen::PollingMeter { since: None };
             }
         }
     }
@@ -1030,6 +1147,11 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                 }
                 self.screen = Screen::Main;
             }
+            Button::PollingCancel => {
+                self.host.cancel_polling_meter();
+                self.screen = Screen::Main;
+                self.message = Some("The polling test was cancelled.".to_string());
+            }
             Button::BenchGo => self.bench_start_countdown(Instant::now()),
             Button::BenchStop => self.bench_cancel(),
             Button::KeepDisplay => {
@@ -1055,15 +1177,27 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
 
     /// Lets time-based things happen. Call this regularly.
     pub fn on_tick(&mut self, now: Instant) {
+        self.frame =
+            (now.saturating_duration_since(self.started).as_millis() / FRAME.as_millis()) as u64;
         self.bench_tick(now);
-        if matches!(self.screen, Screen::PollingMeter)
-            && let Some(lines) = self.host.poll_polling_meter()
-        {
-            self.screen = Screen::Text {
-                title: "Mouse polling rate".to_string(),
-                lines,
-                scroll: 0,
-            };
+        if matches!(self.screen, Screen::PollingMeter { .. }) {
+            match self.host.poll_polling_meter() {
+                PollingUpdate::NoChange => {}
+                PollingUpdate::Started => {
+                    self.screen = Screen::PollingMeter { since: Some(now) };
+                }
+                PollingUpdate::Finished(lines) => {
+                    self.screen = Screen::Text {
+                        title: "Mouse polling rate".to_string(),
+                        lines,
+                        scroll: 0,
+                    };
+                }
+                PollingUpdate::Cancelled => {
+                    self.screen = Screen::Main;
+                    self.message = Some("The polling test was cancelled.".to_string());
+                }
+            }
         }
         if let Screen::KeepDisplay { instance, deadline } = &self.screen
             && now >= *deadline
@@ -1189,8 +1323,23 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
     /// Handles one terminal event.
     pub fn on_event(&mut self, event: Event, now: Instant) -> Flow {
         match event {
-            Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
-            Event::Mouse(mouse) => self.on_mouse(mouse, now),
+            Event::Key(key) if key.kind != KeyEventKind::Release => {
+                self.focused = true;
+                self.on_key(key)
+            }
+            Event::Mouse(mouse) => {
+                self.focused = true;
+                self.on_mouse(mouse, now)
+            }
+            Event::FocusGained => {
+                self.focused = true;
+                Flow::Continue
+            }
+            Event::FocusLost => {
+                self.focused = false;
+                self.hover = None;
+                Flow::Continue
+            }
             _ => Flow::Continue,
         }
     }
@@ -1295,7 +1444,12 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                 }
                 Flow::Continue
             }
-            Screen::PollingMeter => Flow::Continue,
+            Screen::PollingMeter { .. } => {
+                if key.code == KeyCode::Esc {
+                    return self.press_button(Button::PollingCancel);
+                }
+                Flow::Continue
+            }
             Screen::Bench(_) => {
                 match key.code {
                     KeyCode::Enter => return self.press_button(Button::BenchGo),
@@ -1349,6 +1503,11 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                 }
                 KeyCode::Backspace => {
                     self.bar.pop();
+                }
+                KeyCode::Tab => {
+                    if let Some(rest) = self.completion() {
+                        self.bar.push_str(&rest);
+                    }
                 }
                 _ => {
                     if let Some(c) = is_text_char(&key) {
@@ -1530,6 +1689,10 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
 
     fn on_mouse(&mut self, mouse: MouseEvent, now: Instant) -> Flow {
         match mouse.kind {
+            MouseEventKind::Moved | MouseEventKind::Drag(_) => {
+                self.hover = self.hit_at(mouse.column, mouse.row);
+                Flow::Continue
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 self.pressed = self.hit_at(mouse.column, mouse.row);
                 Flow::Continue

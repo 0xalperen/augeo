@@ -6,7 +6,6 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     process::ExitCode,
-    sync::mpsc::Receiver,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -27,7 +26,7 @@ use augeo_sys::{
     restore::RestorePoint,
     state_dir, tools,
 };
-use augeo_tui::{App, Flow, Host};
+use augeo_tui::{App, Flow, Host, POLLING_SECONDS, PollingUpdate};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture},
     execute,
@@ -70,7 +69,7 @@ fn local_config_dir() -> Option<PathBuf> {
 #[derive(Debug, Default)]
 struct RealHost {
     capture: Option<(presentmon::Capture, String)>,
-    polling: Option<Receiver<Result<Vec<f64>, String>>>,
+    polling: Option<tools::PollingMeter>,
 }
 
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
@@ -218,11 +217,26 @@ impl Host for RealHost {
     }
 
     fn start_polling_meter(&mut self) {
-        self.polling = Some(tools::start_polling_meter(5));
+        self.polling = Some(tools::PollingMeter::start(POLLING_SECONDS));
     }
 
-    fn poll_polling_meter(&mut self) -> Option<Vec<String>> {
-        let result = self.polling.as_ref()?.try_recv().ok()?;
+    fn cancel_polling_meter(&mut self) {
+        // Dropping the meter closes its window.
+        self.polling = None;
+    }
+
+    fn poll_polling_meter(&mut self) -> PollingUpdate {
+        let Some(event) = self.polling.as_ref().and_then(tools::PollingMeter::poll) else {
+            return PollingUpdate::NoChange;
+        };
+        let result = match event {
+            tools::MeterEvent::Started => return PollingUpdate::Started,
+            tools::MeterEvent::Cancelled => {
+                self.polling = None;
+                return PollingUpdate::Cancelled;
+            }
+            tools::MeterEvent::Finished(result) => result,
+        };
         self.polling = None;
         let lines = match result.map(|times| tools::polling_from_times(&times)) {
             Ok(Some(polling)) => {
@@ -245,7 +259,7 @@ impl Host for RealHost {
             ],
             Err(e) => vec![e],
         };
-        Some(lines)
+        PollingUpdate::Finished(lines)
     }
 
     fn log(&mut self, line: &str) {
@@ -473,10 +487,16 @@ fn run_app(startup_command: Option<String>) -> Result<(), String> {
         loop {
             app.on_tick(Instant::now());
             terminal.draw(|frame| app.draw(frame))?;
-            if event::poll(Duration::from_millis(250))? {
-                let ev = event::read()?;
-                if app.on_event(ev, Instant::now()) == Flow::Quit {
-                    return Ok(());
+            if event::poll(app.tick_interval())? {
+                // Everything waiting is taken at once, so moving the mouse can't make drawing lag.
+                loop {
+                    let ev = event::read()?;
+                    if app.on_event(ev, Instant::now()) == Flow::Quit {
+                        return Ok(());
+                    }
+                    if !event::poll(Duration::ZERO)? {
+                        break;
+                    }
                 }
             }
         }

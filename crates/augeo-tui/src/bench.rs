@@ -13,8 +13,8 @@ use augeo_ports::{Clock, Store, System};
 
 use crate::app::{App, Host, Screen};
 
-const RUN_SECONDS: u32 = 90;
-const COUNTDOWN: Duration = Duration::from_secs(10);
+pub(crate) const RUN_SECONDS: u32 = 90;
+pub(crate) const COUNTDOWN: Duration = Duration::from_secs(10);
 const SERIES_RUNS: usize = 5;
 /// The most danger an A/B test may switch on and off by itself, since it can't stop to ask each time.
 const MAX_AB_DANGER: u8 = 1;
@@ -49,7 +49,9 @@ pub(crate) enum BenchPhase {
     Countdown {
         until: Instant,
     },
-    Capturing,
+    Capturing {
+        since: Instant,
+    },
 }
 
 /// A benchmark in progress.
@@ -400,14 +402,14 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
                     Ok(()) => {
                         self.host.beep();
                         if let Screen::Bench(s) = &mut self.screen {
-                            s.phase = BenchPhase::Capturing;
+                            s.phase = BenchPhase::Capturing { since: now };
                         }
                     }
                     Err(e) => self.abandon_bench(&session, e),
                 }
             }
             BenchPhase::Countdown { .. } => {}
-            BenchPhase::Capturing => {
+            BenchPhase::Capturing { .. } => {
                 let Some(result) = self.host.poll_capture() else {
                     return;
                 };
