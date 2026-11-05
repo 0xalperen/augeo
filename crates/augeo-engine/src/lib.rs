@@ -48,6 +48,8 @@ pub struct Context {
     pub stamp: Stamp,
     /// The interactive user, so `user` scope reaches their hive even when elevated as someone else.
     pub user_sid: String,
+    /// The active power plan at startup. Only a fallback, as the plan can change at any time, so
+    /// per-plan tweaks read the live one.
     pub power_scheme: String,
     pub adapters: Vec<String>,
     pub display_device: Option<String>,
@@ -73,6 +75,34 @@ impl TweakRequest {
             option: None,
             exe: None,
         }
+    }
+}
+
+/// Whether a tweak changes values inside a power plan, which only matter while that plan is active.
+fn sets_plan_values(resources: &[Resource]) -> bool {
+    resources.iter().any(|r| {
+        matches!(
+            r,
+            Resource::PowerIndexAc { .. } | Resource::PowerIndexDc { .. }
+        )
+    })
+}
+
+fn same_plan(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        _ => a == b,
+    }
+}
+
+/// A power plan's name where its ID is one Windows always uses. Copies have IDs of their own.
+fn plan_label(scheme: &str) -> String {
+    match scheme.to_lowercase().as_str() {
+        "381b4222-f694-41f0-9685-ff5bb260df2e" => "the Balanced plan".to_string(),
+        "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" => "the High Performance plan".to_string(),
+        "a1841308-3541-4fab-bc81-f71556f20b4a" => "the Power Saver plan".to_string(),
+        "e9a42b02-d5df-448d-aa00-03f14749eb61" => "the Ultimate Performance plan".to_string(),
+        other => format!("power plan {other}"),
     }
 }
 
@@ -193,6 +223,10 @@ pub enum EngineError {
     UndoFirst {
         id: String,
     },
+    /// Applied to a power plan other than the one it would change now.
+    AppliedToOtherPlan {
+        id: String,
+    },
     Invalid {
         id: String,
         reason: String,
@@ -240,6 +274,12 @@ impl std::fmt::Display for EngineError {
             }
             Conflict { id, other } => write!(f, "{id} conflicts with {other}. Undo {other} first"),
             Requires { id, other } => write!(f, "{id} needs {other} to be applied too"),
+            AppliedToOtherPlan { id } => {
+                write!(
+                    f,
+                    "{id} is applied to a different power plan. Undo it first, then apply it again"
+                )
+            }
             UndoFirst { id } => {
                 write!(
                     f,
@@ -337,6 +377,8 @@ pub struct TweakStatusView {
     pub rollback_failed: bool,
     /// Why it may have changed, such as a Windows or driver update since it was applied.
     pub drift_note: Option<String>,
+    /// Why a tweak's values are in place but doing nothing, such as being on an inactive power plan.
+    pub not_in_effect: Option<String>,
     pub resources: Vec<ResourceView>,
 }
 
@@ -514,6 +556,24 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
         Ok(None)
     }
 
+    /// The power plan active right now. If that can't be read, the one from startup is the best guess,
+    /// and reading the tweak's own values then reports any real problem.
+    fn live_power_scheme(&self) -> String {
+        match self.system.read(&Address::PowerActiveScheme) {
+            Ok(Value::Text(scheme)) => scheme,
+            _ => self.ctx.power_scheme.clone(),
+        }
+    }
+
+    /// The power plan a tweak switches to, if it does.
+    fn plan_selected_by(&self, id: &str) -> Option<String> {
+        let tweak = self.tweak(id).ok()?;
+        tweak.current_rev()?.resource.iter().find_map(|r| match r {
+            Resource::PowerActiveScheme { scheme } => Some(scheme.to_lowercase()),
+            _ => None,
+        })
+    }
+
     fn build_params(&self, tweak: &Tweak, request: &TweakRequest) -> Result<Params, EngineError> {
         let invalid = |reason: String| EngineError::Invalid {
             id: tweak.id.clone(),
@@ -536,11 +596,18 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
             (None, _) => None,
         };
         let computed = self.computed_value(tweak).map_err(invalid)?;
+        let per_plan = tweak
+            .current_rev()
+            .is_some_and(|rev| sets_plan_values(&rev.resource));
         Ok(Params {
             option,
             exe,
             user_sid: self.ctx.user_sid.clone(),
-            power_scheme: Some(self.ctx.power_scheme.clone()),
+            power_scheme: Some(if per_plan {
+                self.live_power_scheme()
+            } else {
+                self.ctx.power_scheme.clone()
+            }),
             adapters: self.ctx.adapters.clone(),
             display_device: self.ctx.display_device.clone(),
             computed,
@@ -556,9 +623,17 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
             return Err(EngineError::RecoveryRequired);
         }
         let in_plan: BTreeSet<&str> = requests.iter().map(|r| r.id.as_str()).collect();
+        // A batch that switches power plans sets per-plan values on the plan it switches to, because
+        // on the old one they'd do nothing.
+        let switching_to = requests.iter().find_map(|r| self.plan_selected_by(&r.id));
         let mut tweaks = Vec::new();
         for request in requests {
-            tweaks.push(self.plan_one_apply(request, &ledger, &in_plan)?);
+            tweaks.push(self.plan_one_apply(
+                request,
+                &ledger,
+                &in_plan,
+                switching_to.as_deref(),
+            )?);
         }
         Ok(Self::finish_plan(
             Op::Apply,
@@ -572,6 +647,7 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
         request: &TweakRequest,
         ledger: &Ledger,
         in_plan: &BTreeSet<&str>,
+        switching_to: Option<&str>,
     ) -> Result<TweakPlan, EngineError> {
         let tweak = self.tweak(&request.id)?;
         let id = tweak.id.clone();
@@ -604,7 +680,7 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
             }
         }
 
-        let params = self.build_params(&tweak, request)?;
+        let mut params = self.build_params(&tweak, request)?;
         let instance = instance_key(&id, params.exe.as_deref());
         let rev = tweak
             .current_rev()
@@ -619,6 +695,21 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
             .is_some_and(|a| a.rev != rev.rev)
         {
             return Err(EngineError::UndoFirst { id });
+        }
+        if sets_plan_values(&rev.resource) {
+            if let Some(scheme) = switching_to {
+                params.power_scheme = Some(scheme.to_string());
+            }
+            // Its old values are on another plan. Writing a second set would leave the first behind.
+            let elsewhere = ledger.applied.get(&instance).is_some_and(|a| {
+                !same_plan(
+                    a.params.power_scheme.as_deref(),
+                    params.power_scheme.as_deref(),
+                )
+            });
+            if elsewhere {
+                return Err(EngineError::AppliedToOtherPlan { id });
+            }
         }
         let targets = expand(&rev, &params).map_err(|reason| EngineError::Invalid {
             id: id.clone(),
@@ -1291,6 +1382,25 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
             }
         };
 
+        let not_in_effect = applied
+            .filter(|_| {
+                targets.iter().any(|t| {
+                    matches!(t.address, Address::PowerAc { .. } | Address::PowerDc { .. })
+                })
+            })
+            .and_then(|a| a.params.power_scheme.as_deref())
+            .and_then(|applied_to| {
+                let active = self.live_power_scheme();
+                (!applied_to.eq_ignore_ascii_case(&active)).then(|| {
+                    format!(
+                        "It's set on {}, but {} is active now, so it isn't in effect. Undo it, then \
+                         apply it again to use it on the current plan.",
+                        plan_label(applied_to),
+                        plan_label(&active)
+                    )
+                })
+            });
+
         let mut resources = Vec::new();
         let mut read_error = None;
         let (mut at_desired, mut at_baseline, mut third) = (0, 0, 0);
@@ -1377,6 +1487,7 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
             older_revision,
             rollback_failed: applied.is_some_and(|a| a.rollback_failed),
             drift_note,
+            not_in_effect,
             resources,
         })
     }

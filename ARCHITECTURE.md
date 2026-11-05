@@ -133,7 +133,9 @@ TxnEnd
 | Not applied by augeo | Already set | Partial | Not applied | Not applied, value shown |
 | Applied by augeo | Applied | Partial | Changed externally | Changed externally |
 
-A failed read is Unknown, never "not applied". Overlays: in doubt, restart pending, baseline lost, older revision, rollback failed.
+A failed read is Unknown, never "not applied". Overlays: in doubt, restart pending, baseline lost, older revision, rollback failed, not in effect.
+
+Settings inside a power plan only matter while that plan is active, so they follow the live plan rather than the one at startup. A batch that switches plans sets them on the new plan. If the plan changes later, the tweak stays on the old one, because that's where its old value belongs, and it shows as "not in effect" until it's undone and applied again.
 
 ### Failure handling
 
@@ -142,7 +144,7 @@ A failed read is Unknown, never "not applied". Overlays: in doubt, restart pendi
 | Crash before the first write | Closed automatically, as nothing changed |
 | Crash mid-change | A blocking recovery screen on next start. It measures everything and defaults to rollback. A value holding a third value is left alone |
 | Step fails, or a read-back doesn't match | Earlier steps are restored. If that fails too, the baseline is kept and undo retries |
-| Re-apply | Zero writes if already applied, and the baseline is untouched |
+| Re-apply | Zero writes if already applied, and the baseline is untouched. Refused if the tweak's values are on a power plan that's no longer active, so a second set can't be left behind |
 | Changed externally, then undo | Keeps the newer value by default. Overwriting is an explicit choice |
 | Re-apply after an external change | Opens a new baseline epoch. Undo restores the newest, and the oldest is an explicit choice |
 | Journal damage | A torn tail is cut off. Damage heals from the mirror. Damage in both copies keeps what survives, reports lost history and marks affected baselines as lost. augeo never guesses an old value. Damaged files are preserved |

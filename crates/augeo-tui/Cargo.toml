@@ -19,7 +19,8 @@ augeo-engine = { path = "../augeo-engine" }
 augeo-journal = { path = "../augeo-journal" }
 augeo-ports = { path = "../augeo-ports" }
 crossterm = "0.29"
-ratatui = "0.30"
+# The line-info feature counts wrapped lines, which is how scrolling knows where the text ends.
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 
 [dev-dependencies]
 augeo-fakes = { path = "../augeo-fakes" }

@@ -540,9 +540,13 @@ fn run_headless(line: &str) -> Result<(), String> {
             {
                 let state = match engine.applicability(tweak) {
                     Err(reason) => format!("doesn't apply: {reason}"),
-                    Ok(()) => engine
-                        .status(&tweak.id, None)
-                        .map_or_else(|e| e.to_string(), |s| format!("{:?}", s.state)),
+                    Ok(()) => engine.status(&tweak.id, None).map_or_else(
+                        |e| e.to_string(),
+                        |s| match s.not_in_effect {
+                            Some(note) => format!("not in effect: {note}"),
+                            None => format!("{:?}", s.state),
+                        },
+                    ),
                 };
                 println!(
                     "{}#{:<3} {:<40} {state}",

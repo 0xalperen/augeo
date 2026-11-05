@@ -82,6 +82,7 @@ fn state_text(state: &TweakState) -> &'static str {
 pub(crate) fn state_label(status: &Result<TweakStatusView, String>) -> String {
     match status {
         Ok(view) if view.in_doubt => "interrupted".to_string(),
+        Ok(view) if view.not_in_effect.is_some() => "not in effect".to_string(),
         Ok(view) if view.restart_pending => format!("{}, restart", state_text(&view.state)),
         Ok(view) => state_text(&view.state).to_string(),
         Err(_) => "n/a".to_string(),
@@ -94,6 +95,7 @@ fn state_look(label: &str) -> (&'static str, Color) {
         l if l.starts_with("applied") => ("●", GREEN),
         l if l.starts_with("already") => ("●", FOAM),
         l if l.starts_with("not applied") => ("○", MUTED),
+        l if l.starts_with("not in effect") => ("▲", GOLD),
         l if l.starts_with("partial") => ("►", GOLD),
         l if l.starts_with("changed") => ("▲", ORANGE),
         l if l.starts_with("interrupted") => ("▲", PINK),
@@ -125,7 +127,12 @@ pub(crate) fn detail_lines(
     ];
     match status {
         Some(Ok(view)) => {
-            lines.push(format!("State: {}", state_text(&view.state)));
+            if let Some(note) = &view.not_in_effect {
+                lines.push("State: not in effect".to_string());
+                lines.push(format!("  {note}"));
+            } else {
+                lines.push(format!("State: {}", state_text(&view.state)));
+            }
             if let TweakState::Unknown { reason } = &view.state {
                 lines.push(format!("  Couldn't read it: {reason}"));
             }
@@ -470,6 +477,31 @@ fn scrollbar(frame: &mut Frame<'_>, area: Rect, content: usize, viewport: usize,
         }),
         &mut state,
     );
+}
+
+/// How much wrapped text there is compared with its box, so scrolling stops at the last line.
+struct ScrollView {
+    total: usize,
+    viewport: usize,
+}
+
+impl ScrollView {
+    /// `side_cells` is how much of the box's width isn't text, such as borders and padding.
+    fn new(text: &Paragraph<'_>, area: Rect, side_cells: u16) -> Self {
+        Self {
+            total: text.line_count(area.width.saturating_sub(side_cells)),
+            viewport: area.height.saturating_sub(2) as usize,
+        }
+    }
+
+    fn clamp(&self, scroll: u16) -> u16 {
+        let limit = self.total.saturating_sub(self.viewport);
+        scroll.min(u16::try_from(limit).unwrap_or(u16::MAX))
+    }
+
+    fn scrollbar(&self, frame: &mut Frame<'_>, area: Rect, scroll: u16) {
+        scrollbar(frame, area, self.total, self.viewport, scroll as usize);
+    }
 }
 
 impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
@@ -1072,21 +1104,18 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             self.options.get(&tweak.id),
         ));
         let text: Vec<Line> = lines.iter().map(|l| styled_line(l)).collect();
-        let total = text.len();
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+        let view = ScrollView::new(&paragraph, area, 2);
+        self.detail_scroll = view.clamp(self.detail_scroll);
         frame.render_widget(
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .scroll((self.detail_scroll, 0))
-                .block(panel(&tweak.title, focused, self.frame)),
+            paragraph.scroll((self.detail_scroll, 0)).block(panel(
+                &tweak.title,
+                focused,
+                self.frame,
+            )),
             area,
         );
-        scrollbar(
-            frame,
-            area,
-            total,
-            area.height.saturating_sub(2) as usize,
-            self.detail_scroll as usize,
-        );
+        view.scrollbar(frame, area, self.detail_scroll);
     }
 
     fn plan_lines(&self, state: &ConfirmState) -> Vec<Line<'static>> {
@@ -1206,22 +1235,19 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
             .max()
             .unwrap_or(0);
         let color = if state.dry { FOAM } else { danger_color(top) };
-        let plan = self.plan_lines(state);
-        let total = plan.len();
+        let paragraph = Paragraph::new(self.plan_lines(state)).wrap(Wrap { trim: false });
+        let view = ScrollView::new(&paragraph, body, 2);
+        let scroll = view.clamp(state.scroll);
+        if let Screen::Confirm(live) = &mut self.screen {
+            live.scroll = scroll;
+        }
         frame.render_widget(
-            Paragraph::new(plan)
-                .wrap(Wrap { trim: false })
-                .scroll((state.scroll, 0))
+            paragraph
+                .scroll((scroll, 0))
                 .block(accent_panel(title, color)),
             body,
         );
-        scrollbar(
-            frame,
-            body,
-            total,
-            body.height.saturating_sub(2) as usize,
-            state.scroll as usize,
-        );
+        view.scrollbar(frame, body, scroll);
         self.scrolls.push((body, ScrollArea::Body));
 
         if let Some(text) = &self.message {
@@ -1400,20 +1426,20 @@ impl<S: System, T: Store, C: Clock, H: Host> App<S, T, C, H> {
     ) {
         let [body, buttons] = Self::body_and_buttons(area);
         let text: Vec<Line> = lines.iter().map(|l| styled_line(l)).collect();
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+        // Borders and a column of padding on each side.
+        let view = ScrollView::new(&paragraph, body, 4);
+        let scroll = view.clamp(scroll);
+        if let Screen::Text { scroll: live, .. } = &mut self.screen {
+            *live = scroll;
+        }
         frame.render_widget(
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
+            paragraph
                 .scroll((scroll, 0))
                 .block(accent_panel(title, IRIS).padding(ratatui::widgets::Padding::horizontal(1))),
             body,
         );
-        scrollbar(
-            frame,
-            body,
-            lines.len(),
-            body.height.saturating_sub(2) as usize,
-            scroll as usize,
-        );
+        view.scrollbar(frame, body, scroll);
         self.scrolls.push((body, ScrollArea::Body));
         let mut row = self.buttons(buttons);
         row.add_focused("Close (Esc)", Button::Close, Kind::Plain, true);

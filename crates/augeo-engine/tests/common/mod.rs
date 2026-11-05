@@ -13,6 +13,34 @@ use augeo_ports::{Address, DrsProfile, RegRoot};
 pub type TestEngine = Engine<FakeSystem, FakeStore, FakeClock>;
 
 pub const SID: &str = "S-1-5-21-111-222-333-1001";
+pub const BALANCED: &str = "381b4222-f694-41f0-9685-ff5bb260df2e";
+pub const HIGH_PERFORMANCE: &str = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
+pub const PLAN_SUBGROUP: &str = "2a737441-1930-4402-8d77-b2bebba308a3";
+pub const PLAN_SETTING: &str = "48e6b7a6-50f5-4782-a5d4-53bb8f07e226";
+
+/// A per-plan setting's address on one power plan.
+pub fn plan_setting(scheme: &str) -> Address {
+    Address::PowerAc {
+        scheme: scheme.into(),
+        subgroup: PLAN_SUBGROUP.into(),
+        setting: PLAN_SETTING.into(),
+    }
+}
+
+/// A world on the Balanced plan, with the per-plan setting at 1 on both plans.
+pub fn on_balanced() -> World {
+    let world = seeded();
+    world.set(
+        &Address::PowerActiveScheme,
+        augeo_ports::Value::Text(BALANCED.into()),
+    );
+    world.set(&plan_setting(BALANCED), augeo_ports::Value::Dword(1));
+    world.set(
+        &plan_setting(HIGH_PERFORMANCE),
+        augeo_ports::Value::Dword(1),
+    );
+    world
+}
 
 const SOURCE: &str = r#"
 [[tweak.sources]]
@@ -119,11 +147,22 @@ pub fn catalog() -> Catalog {
     let gpu = common("drs-global", "gpu", 1, 1, "") + &drs("base", 100, 1);
     let game = common("drs-game", "game", 1, 1, "") + &drs("{exe}", 100, 1);
 
+    let power = common("plan-switch", "power", 1, 1, "")
+        + &format!(
+            "[[tweak.rev.resource]]\nkind = \"power_active_scheme\"\nscheme = \"{HIGH_PERFORMANCE}\"\n"
+        )
+        + &common("plan-setting", "power", 2, 0, "")
+        + &format!(
+            "[[tweak.rev.resource]]\nkind = \"power_index_ac\"\nsubgroup = \"{PLAN_SUBGROUP}\"\n\
+             setting = \"{PLAN_SETTING}\"\ndesired = 0\n"
+        );
+
     Catalog::parse(&[
         ("system", &system),
         ("cpu", &cpu),
         ("gpu", &gpu),
         ("game", &game),
+        ("power", &power),
     ])
     .expect("the test catalog parses")
 }

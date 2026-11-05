@@ -887,7 +887,8 @@ fn double_clicking_a_tweak_opens_its_changes_but_slow_clicks_do_not() {
 
 #[test]
 fn the_wheel_scrolls_whatever_is_under_the_pointer() {
-    let mut rig = Rig::main();
+    // Short enough that the details don't all fit, so there's something to scroll.
+    let mut rig = Rig::with(true, true, None, (120, 24));
     rig.select_system();
     let (x, y) = rig.where_is(&Hit::Tweak(0));
     rig.mouse(MouseEventKind::ScrollDown, x, y);
@@ -1638,6 +1639,75 @@ fn the_command_bar_completes_with_tab_and_shows_what_it_would_add() {
     rig.typed("nonsense");
     rig.key(KeyCode::Tab);
     assert_eq!(rig.app.bar, "nonsense");
+}
+
+fn body_scroll(rig: &Rig) -> u16 {
+    match &rig.app.screen {
+        Screen::Confirm(state) => state.scroll,
+        Screen::Text { scroll, .. } => *scroll,
+        other => panic!("no body to scroll on {other:?}"),
+    }
+}
+
+/// Reported on a real PC: the undo screen kept scrolling long past its last line.
+#[test]
+fn scrolling_stops_at_the_last_line_on_every_screen() {
+    // The confirmation screen, by wheel and by keyboard.
+    let mut rig = Rig::with(true, true, None, (80, 24));
+    rig.command("auge!dry system#1,2,3,4");
+    let body = rig
+        .app
+        .scrolls
+        .iter()
+        .find(|(_, a)| *a == crate::app::ScrollArea::Body)
+        .map(|(r, _)| *r)
+        .unwrap();
+    for _ in 0..200 {
+        rig.mouse(MouseEventKind::ScrollDown, body.x + 1, body.y + 1);
+    }
+    let end = body_scroll(&rig);
+    assert!(end > 0, "there should be something to scroll here");
+    assert!(rig.text().contains("Undo note of high-two."));
+    for _ in 0..50 {
+        rig.key(KeyCode::PageDown);
+    }
+    assert_eq!(body_scroll(&rig), end, "it must stay at the end");
+    // Coming back up responds at once, with no dead zone to scroll through first.
+    rig.key(KeyCode::Up);
+    assert_eq!(body_scroll(&rig), end - 1);
+    rig.key(KeyCode::Esc);
+
+    // A text screen long enough to scroll.
+    rig.command("auge!info system#1-4");
+    for _ in 0..200 {
+        rig.key(KeyCode::PageDown);
+    }
+    let end = body_scroll(&rig);
+    assert!(end > 0);
+    rig.key(KeyCode::Up);
+    assert_eq!(body_scroll(&rig), end - 1);
+    rig.key(KeyCode::Esc);
+
+    // Text that fits doesn't scroll at all.
+    let mut rig = Rig::main();
+    rig.command("auge!status system");
+    rig.key(KeyCode::PageDown);
+    assert_eq!(body_scroll(&rig), 0);
+    rig.key(KeyCode::Esc);
+
+    // The detail pane.
+    let mut rig = Rig::with(true, true, None, (120, 24));
+    rig.select_system();
+    rig.key(KeyCode::Tab);
+    assert_eq!(rig.app.pane, Pane::Detail);
+    for _ in 0..200 {
+        rig.key(KeyCode::PageDown);
+    }
+    let end = rig.app.detail_scroll;
+    assert!(end > 0 && end < 200, "{end}");
+    assert!(rig.text().contains("https://example.com/safe"));
+    rig.key(KeyCode::Up);
+    assert_eq!(rig.app.detail_scroll, end - 1);
 }
 
 /// The cell the command bar's cursor should be on, after this many typed characters.

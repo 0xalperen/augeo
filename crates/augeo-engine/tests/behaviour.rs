@@ -34,6 +34,117 @@ fn apply_then_undo_restores_exact_values_including_absent_and_other_types() {
     assert_eq!(world.get(&machine("M3")), Value::Text("old".into()));
 }
 
+/// Found on a real PC: `power#1,3` set USB suspend on the plan it was switching away from.
+#[test]
+fn a_batch_that_switches_plans_sets_per_plan_values_on_the_new_plan() {
+    let world = on_balanced();
+    let initial = world.snapshot();
+    let mut e = engine(&world);
+
+    let plan = e
+        .plan_apply(&[request("plan-switch"), request("plan-setting")])
+        .unwrap();
+    let shown: Vec<String> = plan
+        .tweaks
+        .iter()
+        .flat_map(|t| &t.steps)
+        .map(|s| s.address.to_string())
+        .collect();
+    assert!(
+        shown.iter().any(|a| a.contains(HIGH_PERFORMANCE)),
+        "the plan shown must name the new plan: {shown:?}"
+    );
+    e.execute(&plan, &full_confirmation(&plan)).unwrap();
+
+    assert_eq!(
+        world.get(&augeo_ports::Address::PowerActiveScheme),
+        Value::Text(HIGH_PERFORMANCE.into())
+    );
+    assert_eq!(world.get(&plan_setting(HIGH_PERFORMANCE)), Value::Dword(0));
+    assert_eq!(world.get(&plan_setting(BALANCED)), Value::Dword(1));
+    let status = e.status("plan-setting", None).unwrap();
+    assert_eq!(status.state, TweakState::Applied);
+    assert_eq!(status.not_in_effect, None);
+
+    undo_all(&mut e, UndoPolicy::default());
+    assert_eq!(world.snapshot(), initial);
+}
+
+#[test]
+fn the_order_of_a_batch_does_not_change_which_plan_is_used() {
+    let world = on_balanced();
+    let mut e = engine(&world);
+    apply(&mut e, &["plan-setting", "plan-switch"]);
+    assert_eq!(world.get(&plan_setting(HIGH_PERFORMANCE)), Value::Dword(0));
+    assert_eq!(world.get(&plan_setting(BALANCED)), Value::Dword(1));
+}
+
+#[test]
+fn a_per_plan_tweak_says_so_when_its_plan_is_no_longer_active() {
+    let world = on_balanced();
+    let initial = world.snapshot();
+    let mut e = engine(&world);
+
+    apply(&mut e, &["plan-setting"]);
+    assert_eq!(world.get(&plan_setting(BALANCED)), Value::Dword(0));
+    assert_eq!(e.status("plan-setting", None).unwrap().not_in_effect, None);
+
+    // Switching plans later, through augeo or Windows, leaves it on the old plan.
+    apply(&mut e, &["plan-switch"]);
+    let status = e.status("plan-setting", None).unwrap();
+    assert_eq!(status.state, TweakState::Applied);
+    let note = status
+        .not_in_effect
+        .expect("it must say it isn't in effect");
+    assert!(note.contains("Balanced"), "{note}");
+    assert!(note.contains("High Performance"), "{note}");
+
+    // Applying again can't quietly leave a second set of values behind.
+    let error = e.plan_apply(&[request("plan-setting")]).unwrap_err();
+    assert!(matches!(error, EngineError::AppliedToOtherPlan { .. }));
+
+    // Undo goes to the plan that really changed, and the note goes once the plan is back.
+    undo_all(&mut e, UndoPolicy::default());
+    assert_eq!(world.snapshot(), initial);
+}
+
+#[test]
+fn per_plan_tweaks_read_the_active_plan_live_rather_than_the_one_from_startup() {
+    let world = on_balanced();
+    world.set(&plan_setting(HIGH_PERFORMANCE), Value::Dword(0));
+    let mut e = engine(&world);
+    assert_eq!(
+        e.status("plan-setting", None).unwrap().state,
+        TweakState::NotApplied
+    );
+
+    // The plan changes while augeo stays open.
+    world.set(
+        &augeo_ports::Address::PowerActiveScheme,
+        Value::Text(HIGH_PERFORMANCE.into()),
+    );
+    assert_eq!(
+        e.status("plan-setting", None).unwrap().state,
+        TweakState::AlreadySet
+    );
+
+    world.set(&plan_setting(HIGH_PERFORMANCE), Value::Dword(1));
+    apply(&mut e, &["plan-setting"]);
+    assert_eq!(world.get(&plan_setting(HIGH_PERFORMANCE)), Value::Dword(0));
+    assert_eq!(world.get(&plan_setting(BALANCED)), Value::Dword(1));
+}
+
+#[test]
+fn an_unreadable_active_plan_falls_back_to_the_one_from_startup() {
+    let world = on_balanced();
+    let e = engine(&world);
+    world.set_unreadable(&augeo_ports::Address::PowerActiveScheme, true);
+    assert_eq!(
+        e.status("plan-setting", None).unwrap().state,
+        TweakState::NotApplied
+    );
+}
+
 #[test]
 fn applying_twice_writes_nothing_more_and_keeps_the_baseline() {
     let world = seeded();
