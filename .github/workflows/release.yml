@@ -73,4 +73,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" "$STAGE.zip" augeo.exe SHA256SUMS.txt \
-            --prerelease --title "$GITHUB_REF_NAME" --generate-notes
+            --prerelease --title "$GITHUB_REF_NAME" \
+            --notes-file ".github/release-notes/$GITHUB_REF_NAME.md"
