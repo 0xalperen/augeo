@@ -171,6 +171,18 @@ Findings on driver 610.88 that shaped this:
 
 **NVML:** `nvml.dll` from System32, read-only, for the check report. A missing driver isn't an error, and NVIDIA tweaks are disabled with the reason.
 
+## Interface
+
+All colours and glyphs come from `augeo-tui/src/theme.rs`. A highlight is an explicit colour on every cell of a row, never reverse video, and a test checks every row by keyboard and by mouse. Colour is never the only signal.
+
+Animation follows the clock rather than events. The loop draws every 50 ms while the window is in front, every 500 ms behind another window, and once a second during a benchmark capture.
+
+To look at the screens without a terminal, `AUGEO_RENDER_DIR=<folder> cargo test -p augeo-tui render_screens -- --ignored` writes them to an HTML page with their real colours.
+
+## The polling meter
+
+Since July 2023, Windows 11 limits raw mouse input to background programs to about 125 messages per second, so a hidden listener reads about 125 Hz whatever the mouse does. A terminal window belongs to another process, so `augeo-sys/src/tools.rs` opens a small window of its own and only starts timing when it's clicked, which brings it to the front. If it loses focus mid-test, the result is thrown away.
+
 ## Adding a tweak
 
 1. Find a primary source, and record what it really supports. Pick the evidence level honestly.

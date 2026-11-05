@@ -32,7 +32,7 @@ Design details are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 - Windows 10 version 2004 or newer, or Windows 11
 - An NVIDIA GPU for the GPU tweaks. AMD and Intel CPUs are both supported
-- A terminal window of at least 80x24. Windows Terminal or the classic console both work
+- A terminal window of at least 80x24. Windows Terminal or the classic console both work. Setting `NO_COLOR` turns colour off
 - Administrator rights to apply changes. Browsing and checks need none
 
 ## Installation
@@ -80,11 +80,11 @@ Everything works by keyboard, by mouse and by command.
 
 ### Mouse
 
-Click rows, checkboxes, buttons and the command bar. The wheel scrolls whatever is under the pointer. Double-click a tweak to open its changes. A button fires when you release over it, so sliding off cancels.
+Click rows, checkboxes, buttons and the command bar. What's under the pointer lights up. The wheel scrolls whatever is under the pointer. Double-click a tweak to open its changes. A button fires when you release over it, so sliding off cancels.
 
 ### Commands
 
-Press `/`, then type:
+Press `/`, then type. Tab completes what you've started:
 
 | Command | What it does |
 |---|---|
@@ -106,7 +106,7 @@ Press `/`, then type:
 | `auge!game#1@cs2.exe` | Applies a per-game tweak |
 | `auge!bench` | Benchmarking, see below |
 | `auge!timer` | Timer resolution tool |
-| `auge!polling` | Measures your mouse's polling rate |
+| `auge!polling` | Measures your mouse's polling rate, in a small window you click to start |
 | `auge!restore-point` | Creates a restore point |
 | `auge!elevate` | Opens an elevated window |
 | `auge!reboot` | Offers to restart. augeo never restarts by itself |

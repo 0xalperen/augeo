@@ -11,6 +11,8 @@ Every item must be signed off on real hardware or a VM before a release. CI can'
 - [ ] **AltGr keyboard layouts.** Type `auge!cpu#1-3,5` on a layout where `#` needs AltGr.
 - [ ] **Windows 10 conhost.** Keyboard, mouse and resize. So far tested only on Windows 11.
 - [ ] **The real app on both console hosts.** Input was proven with a test program, and the app's logic is tested against a simulated terminal. Nobody has yet used the finished app by keyboard, mouse and command in Windows Terminal and conhost.
+- [ ] **Colour and highlights on both console hosts.** Launch with `NO_COLOR` unset. Selection must be visible on every row, by keyboard and by mouse. Check rounded corners in Windows Terminal, and that the classic console's font shows every symbol.
+- [ ] **Polling meter.** On a 1000 Hz mouse it must read about 1000 Hz, on both console hosts. Check that it waits for the click, and that clicking away mid-test throws the result out.
 - [ ] **Elevation round trip.** Apply from a read-only window, accept UAC, confirm in the new window, return, and see the state refresh. Also decline UAC. Also elevate with a different administrator's password, and confirm per-user tweaks reach the signed-in user.
 
 - [ ] **Every tweak, for real.** Apply, read back, restart if needed, undo, and confirm the value is restored, for each of the 23 non-game tweaks and 3 game tweaks. So far the engine has only been exercised on the real system with test values. Run this in a VM where possible.
