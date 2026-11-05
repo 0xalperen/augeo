@@ -9,6 +9,13 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+/// What Windows reports about hardware-accelerated GPU scheduling for the current boot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuScheduling {
+    pub supported: bool,
+    pub enabled: bool,
+}
+
 /// A value as it exists on the system, including "does not exist".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

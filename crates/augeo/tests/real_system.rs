@@ -91,6 +91,7 @@ fn context() -> Context {
         },
         user_sid: current_user_sid().unwrap(),
         power_scheme: "381b4222-f694-41f0-9685-ff5bb260df2e".into(),
+        gpu_scheduling: None,
         adapters: vec![],
         display_device: None,
         max_display_mode: None,

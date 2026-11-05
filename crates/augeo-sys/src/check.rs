@@ -1,7 +1,7 @@
 //! The read-only check report: things that matter a lot but can't or shouldn't be changed from here.
 //! Nothing in this module writes anything.
 
-use augeo_ports::{RegRoot, Value};
+use augeo_ports::{GpuScheduling, RegRoot, Value};
 use windows::{
     Win32::{
         Storage::FileSystem::GetDiskFreeSpaceExW,
@@ -509,6 +509,17 @@ fn uptime_findings() -> Vec<Finding> {
     }]
 }
 
+fn gpu_scheduling_finding(scheduling: GpuScheduling) -> Finding {
+    let detail = if !scheduling.supported {
+        "Windows reports that this GPU and driver don't support it.".to_string()
+    } else if scheduling.enabled {
+        "Windows reports that it's on.".to_string()
+    } else {
+        "Windows reports that it's off.".to_string()
+    };
+    finding(Verdict::Info, "GPU scheduling (HAGS)", detail, None)
+}
+
 /// Gathers the report. `year_now` is passed in so the age checks are testable.
 pub fn report(year_now: i32) -> Vec<Finding> {
     let mut out = Vec::new();
@@ -522,6 +533,9 @@ pub fn report(year_now: i32) -> Vec<Finding> {
             "No NVIDIA driver was found.".to_string(),
             Some("augeo's GPU tweaks need one."),
         )),
+    }
+    if let Some(scheduling) = detect::gpu_scheduling() {
+        out.push(gpu_scheduling_finding(scheduling));
     }
     out.extend(display_findings());
     out.extend(cpu_findings());

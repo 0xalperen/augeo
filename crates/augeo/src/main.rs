@@ -399,6 +399,7 @@ fn build_context(system: &WindowsSystem, gpu: Option<&nvml::GpuInfo>) -> Result<
         },
         user_sid: elevation::interactive_user_sid().map_err(|e| e.to_string())?,
         power_scheme,
+        gpu_scheduling: detect::gpu_scheduling(),
         adapters: nic::wired_adapters(),
         display_device,
         max_display_mode: best_mode.map(display::Mode::render),

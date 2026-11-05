@@ -144,7 +144,18 @@ pub fn catalog() -> Catalog {
              setting = {setting}\nid_source = \"public\"\ndesired = {desired}\n"
         )
     };
-    let gpu = common("drs-global", "gpu", 1, 1, "") + &drs("base", 100, 1);
+    let gpu = common("drs-global", "gpu", 1, 1, "")
+        + &drs("base", 100, 1)
+        + &common(
+            "scheduling",
+            "gpu",
+            2,
+            1,
+            "live_state = \"gpu_scheduling\"\n\
+             [[tweak.option]]\nkey = \"on\"\nname = \"On\"\nrecommended = true\n\
+             [[tweak.option]]\nkey = \"off\"\nname = \"Off\"\n",
+        )
+        + &reg("machine", "HwSch", "{ by_option = { on = 2, off = 1 } }");
     let game = common("drs-game", "game", 1, 1, "") + &drs("{exe}", 100, 1);
 
     let power = common("plan-switch", "power", 1, 1, "")
@@ -185,6 +196,7 @@ pub fn context() -> Context {
         },
         user_sid: SID.into(),
         power_scheme: "381b4222-f694-41f0-9685-ff5bb260df2e".into(),
+        gpu_scheduling: None,
         adapters: vec![],
         display_device: None,
         max_display_mode: None,

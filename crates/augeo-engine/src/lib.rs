@@ -19,13 +19,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use applicability::Environment;
 use augeo_catalog::{
     Catalog,
-    schema::{Computed, Desired, Effect, Resource, Status, Tweak},
+    schema::{Computed, Desired, Effect, LiveState, Resource, Status, Tweak},
 };
 use augeo_command::{Component, is_valid_exe};
 use augeo_journal::{
     Body, Decision, Journal, JournalError, Ledger, Op, OpenReport, OpenTxn, Outcome, Params, Stamp,
 };
-use augeo_ports::{Address, Clock, PortError, Store, System, Value};
+use augeo_ports::{Address, Clock, GpuScheduling, PortError, Store, System, Value};
 use expand::{Target, expand};
 use sha2::{Digest, Sha256};
 
@@ -51,6 +51,8 @@ pub struct Context {
     /// The active power plan at startup. Only a fallback, as the plan can change at any time, so
     /// per-plan tweaks read the live one.
     pub power_scheme: String,
+    /// What Windows reports for this boot, if it answers. It only changes with a restart.
+    pub gpu_scheduling: Option<GpuScheduling>,
     pub adapters: Vec<String>,
     pub display_device: Option<String>,
     /// The display's best mode, when it differs from the current one.
@@ -379,6 +381,8 @@ pub struct TweakStatusView {
     pub drift_note: Option<String>,
     /// Why a tweak's values are in place but doing nothing, such as being on an inactive power plan.
     pub not_in_effect: Option<String>,
+    /// What Windows itself reports, where the tweak's own values can't fully show it.
+    pub live_note: Option<String>,
     pub resources: Vec<ResourceView>,
 }
 
@@ -556,6 +560,37 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
         Ok(None)
     }
 
+    /// What Windows reports for this tweak, if the tweak has such a state and Windows answers.
+    fn reported_scheduling(&self, tweak: &Tweak) -> Option<GpuScheduling> {
+        match tweak.live_state {
+            Some(LiveState::GpuScheduling) => self.ctx.gpu_scheduling,
+            None => None,
+        }
+    }
+
+    /// Why this tweak can't do anything here, according to Windows.
+    fn reported_unavailable(&self, tweak: &Tweak) -> Option<EngineError> {
+        self.reported_scheduling(tweak)
+            .filter(|s| !s.supported)
+            .map(|_| EngineError::NotAvailable {
+                id: tweak.id.clone(),
+                reason: "Windows reports that this GPU and driver don't support it".to_string(),
+            })
+    }
+
+    /// The registry value can be missing whichever way the setting is. So when what Windows reports
+    /// already matches the chosen option, a missing value is fine, and there's nothing to write.
+    fn accept_absent_if_reported(&self, tweak: &Tweak, params: &Params, targets: &mut [Target]) {
+        let Some(scheduling) = self.reported_scheduling(tweak) else {
+            return;
+        };
+        if (params.option.as_deref() == Some("on")) == scheduling.enabled {
+            for target in targets {
+                target.accept_absent = true;
+            }
+        }
+    }
+
     /// The power plan active right now. If that can't be read, the one from startup is the best guess,
     /// and reading the tweak's own values then reports any real problem.
     fn live_power_scheme(&self) -> String {
@@ -711,10 +746,18 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
                 return Err(EngineError::AppliedToOtherPlan { id });
             }
         }
-        let targets = expand(&rev, &params).map_err(|reason| EngineError::Invalid {
+        if !ledger.applied.contains_key(&instance)
+            && let Some(error) = self.reported_unavailable(&tweak)
+        {
+            return Err(error);
+        }
+        let mut targets = expand(&rev, &params).map_err(|reason| EngineError::Invalid {
             id: id.clone(),
             reason,
         })?;
+        if !ledger.applied.contains_key(&instance) {
+            self.accept_absent_if_reported(&tweak, &params, &mut targets);
+        }
         if targets.is_empty() {
             return Err(EngineError::NotAvailable {
                 id,
@@ -1368,7 +1411,10 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
                     id: id.to_string(),
                     reason: "has no revision".to_string(),
                 })?;
-                let targets = expand(rev, &params).map_err(|reason| EngineError::Invalid {
+                if let Some(error) = self.reported_unavailable(&tweak) {
+                    return Err(error);
+                }
+                let mut targets = expand(rev, &params).map_err(|reason| EngineError::Invalid {
                     id: id.to_string(),
                     reason,
                 })?;
@@ -1378,6 +1424,7 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
                         reason: "there's nothing on this PC for it to change".to_string(),
                     });
                 }
+                self.accept_absent_if_reported(&tweak, &params, &mut targets);
                 // Planning would refuse this, so "not applied" would wrongly suggest it could be.
                 // Only a clear no counts here. A failed check is left to the reads below to report.
                 if let Some(missing) = targets
@@ -1499,6 +1546,12 @@ impl<S: System, T: Store, C: Clock> Engine<S, T, C> {
             rollback_failed: applied.is_some_and(|a| a.rollback_failed),
             drift_note,
             not_in_effect,
+            live_note: self.reported_scheduling(&tweak).map(|s| {
+                format!(
+                    "Windows reports it's {} right now.",
+                    if s.enabled { "on" } else { "off" }
+                )
+            }),
             resources,
         })
     }

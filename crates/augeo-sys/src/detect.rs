@@ -2,19 +2,93 @@
 
 use std::arch::x86_64::{__cpuid, __cpuid_count};
 
-use augeo_ports::{PortError, RegRoot, Value};
-use windows::Win32::{
-    System::{
-        Diagnostics::Debug::MessageBeep,
-        Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS},
-        SystemInformation::GetTickCount64,
+use augeo_ports::{GpuScheduling, PortError, RegRoot, Value};
+use windows::{
+    Wdk::Graphics::Direct3D::{
+        D3DKMT_ADAPTERINFO, D3DKMT_CLOSEADAPTER, D3DKMT_ENUMADAPTERS2, D3DKMT_QUERY_DEVICE_IDS,
+        D3DKMT_QUERYADAPTERINFO, D3DKMT_WDDM_2_7_CAPS, D3DKMTCloseAdapter, D3DKMTEnumAdapters2,
+        D3DKMTQueryAdapterInfo, KMTQAITYPE_PHYSICALADAPTERDEVICEIDS, KMTQAITYPE_WDDM_2_7_CAPS,
+        KMTQUERYADAPTERINFOTYPE,
     },
-    UI::WindowsAndMessaging::MB_OK,
+    Win32::{
+        System::{
+            Diagnostics::Debug::MessageBeep,
+            Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS},
+            SystemInformation::GetTickCount64,
+        },
+        UI::WindowsAndMessaging::MB_OK,
+    },
 };
 
 use crate::registry;
 
 const CURRENT_VERSION: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+const NVIDIA_VENDOR_ID: u32 = 0x10DE;
+
+/// Asks the graphics kernel for one piece of information about an adapter.
+fn query_adapter<T>(adapter: u32, kind: KMTQUERYADAPTERINFOTYPE, out: &mut T) -> bool {
+    let mut query = D3DKMT_QUERYADAPTERINFO {
+        hAdapter: adapter,
+        Type: kind,
+        pPrivateDriverData: std::ptr::from_mut(out).cast(),
+        PrivateDriverDataSize: size_of::<T>() as u32,
+    };
+    // SAFETY: the query points at `out`, whose exact size it gives, and both outlive the call.
+    unsafe { D3DKMTQueryAdapterInfo(&mut query) }.is_ok()
+}
+
+fn decode_gpu_scheduling(bits: u32) -> GpuScheduling {
+    // Bit 2 is "enabled by default", which isn't used. On a real PC it read off with scheduling on
+    // and no registry value, so what it means in practice isn't clear.
+    GpuScheduling {
+        supported: bits & 0b01 != 0,
+        enabled: bits & 0b10 != 0,
+    }
+}
+
+fn is_nvidia(adapter: u32) -> bool {
+    let mut ids = D3DKMT_QUERY_DEVICE_IDS::default();
+    query_adapter(adapter, KMTQAITYPE_PHYSICALADAPTERDEVICEIDS, &mut ids)
+        && ids.DeviceIds.VendorID == NVIDIA_VENDOR_ID
+}
+
+/// What Windows reports about GPU scheduling on the NVIDIA GPU, if it answers.
+///
+/// The registry can't say, because scheduling can be on with its value missing. Microsoft's reference
+/// lists these fields but reserves the structure for system use, so this is only a read, any failure
+/// means "unknown", and nothing is changed because of it without showing the user first.
+#[must_use]
+pub fn gpu_scheduling() -> Option<GpuScheduling> {
+    let mut list = D3DKMT_ENUMADAPTERS2::default();
+    // SAFETY: a null list asks only for the number of adapters, written into `list`.
+    if unsafe { D3DKMTEnumAdapters2(&mut list) }.is_err() {
+        return None;
+    }
+    let mut adapters = vec![D3DKMT_ADAPTERINFO::default(); list.NumAdapters as usize];
+    list.pAdapters = adapters.as_mut_ptr();
+    // SAFETY: the buffer holds as many entries as `NumAdapters` says, and outlives the call.
+    if unsafe { D3DKMTEnumAdapters2(&mut list) }.is_err() {
+        return None;
+    }
+    adapters.truncate(list.NumAdapters as usize);
+
+    let mut found = None;
+    for adapter in &adapters {
+        if found.is_none() && is_nvidia(adapter.hAdapter) {
+            let mut caps = D3DKMT_WDDM_2_7_CAPS::default();
+            if query_adapter(adapter.hAdapter, KMTQAITYPE_WDDM_2_7_CAPS, &mut caps) {
+                // SAFETY: every member of this union is plain integer bits.
+                found = Some(decode_gpu_scheduling(unsafe { caps.Anonymous.Value }));
+            }
+        }
+        let close = D3DKMT_CLOSEADAPTER {
+            hAdapter: adapter.hAdapter,
+        };
+        // SAFETY: the handle came from the enumeration above and is closed once, here.
+        let _ = unsafe { D3DKMTCloseAdapter(&close) };
+    }
+    found
+}
 const BATTERY_NONE: u8 = 128;
 const BATTERY_UNKNOWN: u8 = 255;
 
@@ -133,6 +207,24 @@ pub fn boot_id(now_ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_gpu_scheduling_bits_follow_microsofts_order() {
+        let decoded = decode_gpu_scheduling(0b0011);
+        assert!(decoded.supported && decoded.enabled);
+        let decoded = decode_gpu_scheduling(0b0001);
+        assert!(decoded.supported && !decoded.enabled);
+        // The fields after these, and the reserved bits, mean nothing here.
+        let decoded = decode_gpu_scheduling(0xFFFF_FFFC);
+        assert!(!decoded.supported && !decoded.enabled);
+    }
+
+    #[test]
+    fn asking_windows_about_gpu_scheduling_is_safe_on_any_machine() {
+        for _ in 0..50 {
+            let _ = gpu_scheduling();
+        }
+    }
 
     #[test]
     fn the_build_is_a_real_windows_build() {

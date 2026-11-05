@@ -137,7 +137,13 @@ A failed read is Unknown, never "not applied". Overlays: in doubt, restart pendi
 
 Settings inside a power plan only matter while that plan is active, so they follow the live plan rather than the one at startup. A batch that switches plans sets them on the new plan. If the plan changes later, the tweak stays on the old one, because that's where its old value belongs, and it shows as "not in effect" until it's undone and applied again.
 
-### Failure handling
+### State the values can't show
+
+GPU scheduling can be on with no `HwSchMode` value at all, as seen on a real PC. So `live_state = "gpu_scheduling"` has the engine compare the chosen option with what Windows reports through `D3DKMTQueryAdapterInfo`: if they already match, a missing value counts as satisfied and nothing is written. An explicit value is still compared as usual.
+
+Microsoft's reference lists these fields but reserves the structure for system use, so it's treated as a hint. It's only read, and if the query fails, the values decide as they do for any other tweak. Its "enabled by default" field isn't used, because it read off on a PC where scheduling was on with no value set.
+
+## Failure handling
 
 | Case | What happens |
 |---|---|

@@ -24,6 +24,7 @@ sha2 = "0.11.1"
 [dependencies.windows]
 version = "0.62"
 features = [
+    "Wdk_Graphics_Direct3D",
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_HumanInterfaceDevice",
     "Win32_Foundation",

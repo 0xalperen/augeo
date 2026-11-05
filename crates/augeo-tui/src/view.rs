@@ -133,6 +133,9 @@ pub(crate) fn detail_lines(
             } else {
                 lines.push(format!("State: {}", state_text(&view.state)));
             }
+            if let Some(note) = &view.live_note {
+                lines.push(format!("  {note}"));
+            }
             if let TweakState::Unknown { reason } = &view.state {
                 lines.push(format!("  Couldn't read it: {reason}"));
             }

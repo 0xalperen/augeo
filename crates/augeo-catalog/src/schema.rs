@@ -33,6 +33,15 @@ pub struct Myth {
     pub source: Option<String>,
 }
 
+/// A state Windows reports directly. It's a closed list, like resource kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveState {
+    /// The registry value can be missing whichever way this is set. The tweak's options must be `on`
+    /// and `off`.
+    GpuScheduling,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tweak {
@@ -62,6 +71,9 @@ pub struct Tweak {
     pub requires: Vec<String>,
     #[serde(default)]
     pub security_lowering: bool,
+    /// Where Windows reports a state that the tweak's own values can't fully show.
+    #[serde(default)]
+    pub live_state: Option<LiveState>,
     /// Whether the `recommended` preset includes this tweak.
     #[serde(default)]
     pub preset: bool,

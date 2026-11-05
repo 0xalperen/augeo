@@ -224,6 +224,7 @@ fn context() -> Context {
         },
         user_sid: SID.into(),
         power_scheme: "381b4222-f694-41f0-9685-ff5bb260df2e".into(),
+        gpu_scheduling: None,
         adapters: vec![],
         display_device: Some("DISPLAY1".into()),
         max_display_mode: Some("1920x1080@144".into()),

@@ -160,12 +160,13 @@ title = "Hardware-accelerated GPU scheduling"
 summary = """
 Lets the GPU manage its own memory scheduling. DLSS Frame Generation requires it. No credible study \
 shows a latency gain either way, so measure your own games. Microsoft's Settings app is the supported \
-way to change it, and this registry value isn't officially documented. A missing value doesn't \
-necessarily mean off.\
+way to change it, and this registry value isn't officially documented. It can be on with no value \
+set, so augeo also shows what Windows reports where it can.\
 """
 danger = 1
 evidence = "Community"
 effect = "restart"
+live_state = "gpu_scheduling"
 risks = [
     "Turning it off disables DLSS Frame Generation.",
     "PresentMon's GPU figures read about 0.5 ms high with it on, which matters when comparing runs.",
@@ -193,6 +194,11 @@ claim = "Describes the feature and the Settings path. It doesn't document the re
 url = "https://winhance.net/docs/features/optimizations/gaming-performance.html"
 retrieved = "2026-11-05"
 claim = "An open source tool's documentation gives HwSchMode 2 for on and 1 for off."
+
+[[tweak.sources]]
+url = "https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmdt/ns-d3dkmdt-d3dkmt_wddm_2_7_caps"
+retrieved = "2026-11-05"
+claim = "Lists fields for whether it's supported and enabled, but reserves the structure for system use, so augeo's reading of it is only a hint."
 
 [[tweak.rev]]
 rev = 1

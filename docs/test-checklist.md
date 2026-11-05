@@ -17,7 +17,7 @@ Every item must be signed off on real hardware or a VM before a release. CI can'
 
 - [ ] **Every tweak, for real.** Apply, read back, restart if needed, undo, and confirm the value is restored, for each of the 23 non-game tweaks and 3 game tweaks. So far the engine has only been exercised on the real system with test values. Run this in a VM where possible.
 - [ ] **TRIM value.** Confirm `DisableDeleteNotification` matches `fsutil behavior query DisableDeleteNotify`. Microsoft documents the command, not the registry value.
-- [ ] **HAGS value.** Confirm `HwSchMode` 2 and 1 match the Settings toggle. Only community sources give those values.
+- [ ] **HAGS value.** Confirm `HwSchMode` 2 and 1 match the Settings toggle. Only community sources give those values. Value 2 showed on, on Windows 11 26100. Also confirm the state Windows reports matches Settings in both positions, since that query is reserved by Microsoft and could change.
 - [ ] **Windowed optimizations value.** Confirm `SwapEffectUpgradeEnable` matches the Settings toggle, which is also community-sourced.
 - [ ] **Low Latency Mode.** Measure whether `PRERENDERLIMIT=1` lowers latency in a GPU-bound DX11 game. If not, it should leave the preset.
 - [ ] **G-SYNC gate.** Confirm `gpu#2` is offered with G-SYNC active, and disabled without it. The development PC has it inactive and no NVIDIA Control Panel.

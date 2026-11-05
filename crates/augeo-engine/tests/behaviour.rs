@@ -34,6 +34,117 @@ fn apply_then_undo_restores_exact_values_including_absent_and_other_types() {
     assert_eq!(world.get(&machine("M3")), Value::Text("old".into()));
 }
 
+fn scheduling_context(supported: bool, enabled: bool) -> augeo_engine::Context {
+    let mut ctx = context();
+    ctx.gpu_scheduling = Some(augeo_ports::GpuScheduling { supported, enabled });
+    ctx
+}
+
+fn with_option(id: &str, option: &str) -> TweakRequest {
+    TweakRequest {
+        id: id.to_string(),
+        option: Some(option.to_string()),
+        exe: None,
+    }
+}
+
+/// Found on a real PC: scheduling stayed on with its value gone, while augeo said "not applied".
+#[test]
+fn scheduling_that_is_already_on_with_no_value_reads_as_already_set_and_writes_nothing() {
+    let world = seeded();
+    let initial = world.snapshot();
+    let mut e = engine_with(&world, scheduling_context(true, true), true);
+
+    let status = e.status("scheduling", None).unwrap();
+    assert_eq!(status.state, TweakState::AlreadySet);
+    assert!(status.live_note.unwrap().contains("it's on right now"));
+
+    let writes = world.writes().len();
+    let report = apply(&mut e, &["scheduling"]);
+    assert_eq!(
+        report.results,
+        vec![("scheduling".to_string(), TweakResult::NoChange)]
+    );
+    assert_eq!(world.writes().len(), writes);
+    assert_eq!(world.snapshot(), initial);
+}
+
+#[test]
+fn scheduling_that_is_off_can_be_turned_on_and_the_undo_is_exact() {
+    let world = seeded();
+    let initial = world.snapshot();
+    let mut e = engine_with(&world, scheduling_context(true, false), true);
+    assert_eq!(
+        e.status("scheduling", None).unwrap().state,
+        TweakState::NotApplied
+    );
+
+    apply(&mut e, &["scheduling"]);
+    assert_eq!(world.get(&machine("HwSch")), Value::Dword(2));
+    assert_eq!(
+        e.status("scheduling", None).unwrap().state,
+        TweakState::Applied
+    );
+
+    undo_all(&mut e, UndoPolicy::default());
+    assert_eq!(world.snapshot(), initial);
+}
+
+#[test]
+fn scheduling_that_is_on_with_no_value_can_still_be_turned_off() {
+    let world = seeded();
+    let initial = world.snapshot();
+    let mut e = engine_with(&world, scheduling_context(true, true), true);
+
+    let plan = e.plan_apply(&[with_option("scheduling", "off")]).unwrap();
+    e.execute(&plan, &full_confirmation(&plan)).unwrap();
+    assert_eq!(world.get(&machine("HwSch")), Value::Dword(1));
+
+    undo_all(&mut e, UndoPolicy::default());
+    assert_eq!(world.snapshot(), initial);
+}
+
+#[test]
+fn scheduling_off_with_no_value_needs_no_write_to_stay_off() {
+    let world = seeded();
+    let e = engine_with(&world, scheduling_context(true, false), true);
+    let plan = e.plan_apply(&[with_option("scheduling", "off")]).unwrap();
+    assert!(plan.tweaks.iter().all(|t| !t.writes()));
+}
+
+#[test]
+fn an_explicit_value_that_disagrees_is_still_written() {
+    // Off in the registry, not yet restarted, so Windows still reports on.
+    let world = seeded();
+    world.set(&machine("HwSch"), Value::Dword(1));
+    let mut e = engine_with(&world, scheduling_context(true, true), true);
+    apply(&mut e, &["scheduling"]);
+    assert_eq!(world.get(&machine("HwSch")), Value::Dword(2));
+}
+
+#[test]
+fn scheduling_this_gpu_does_not_support_is_unavailable() {
+    let world = seeded();
+    let e = engine_with(&world, scheduling_context(false, false), true);
+    assert!(matches!(
+        e.status("scheduling", None),
+        Err(EngineError::NotAvailable { .. })
+    ));
+    assert!(matches!(
+        e.plan_apply(&[request("scheduling")]),
+        Err(EngineError::NotAvailable { .. })
+    ));
+}
+
+#[test]
+fn if_windows_does_not_answer_the_values_decide_as_before() {
+    let world = seeded();
+    let e = engine(&world);
+    let status = e.status("scheduling", None).unwrap();
+    assert_eq!(status.state, TweakState::NotApplied);
+    assert_eq!(status.live_note, None);
+}
+
 /// Found on a real PC: a network setting the driver doesn't offer read as "not applied".
 #[test]
 fn something_the_system_does_not_offer_reads_as_unavailable_rather_than_not_applied() {
