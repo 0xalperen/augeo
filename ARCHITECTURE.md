@@ -187,6 +187,8 @@ Animation follows the clock rather than events. The loop draws every 50 ms while
 
 To look at the screens without a terminal, `AUGEO_RENDER_DIR=<folder> cargo test -p augeo-tui render_screens -- --ignored` writes them to an HTML page with their real colours.
 
+The logo is `assets/logo.svg`. `assets/logo.png`, `assets/banner.png` (from `assets/banner.html`) and `crates/augeo/augeo.ico` are rendered from it and committed, and `crates/augeo/build.rs` embeds the icon and file details in the exe.
+
 ## The polling meter
 
 Since July 2023, Windows 11 limits raw mouse input to background programs to about 125 messages per second, so a hidden listener reads about 125 Hz whatever the mouse does. A terminal window belongs to another process, so `augeo-sys/src/tools.rs` opens a small window of its own and only starts timing when it's clicked, which brings it to the front. If it loses focus mid-test, the result is thrown away.

@@ -30,11 +30,11 @@ use windows::{
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
-                GetMessageW, GetSystemMetrics, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
-                RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNORMAL, SetForegroundWindow,
-                SetTimer, ShowWindow, WM_ACTIVATE, WM_DESTROY, WM_ERASEBKGND, WM_INPUT, WM_KEYDOWN,
-                WM_LBUTTONDOWN, WM_PAINT, WM_TIMER, WNDCLASSW, WS_CAPTION, WS_EX_TOPMOST,
-                WS_OVERLAPPED, WS_SYSMENU,
+                GetMessageW, GetSystemMetrics, IDC_ARROW, LoadCursorW, LoadIconW, MSG,
+                PostQuitMessage, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNORMAL,
+                SetForegroundWindow, SetTimer, ShowWindow, WM_ACTIVATE, WM_DESTROY, WM_ERASEBKGND,
+                WM_INPUT, WM_KEYDOWN, WM_LBUTTONDOWN, WM_PAINT, WM_TIMER, WNDCLASSW, WS_CAPTION,
+                WS_EX_TOPMOST, WS_OVERLAPPED, WS_SYSMENU,
             },
         },
     },
@@ -554,6 +554,10 @@ fn run_meter_window(
         hInstance: module.into(),
         // SAFETY: this loads a cursor every Windows has, shared by the whole system.
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
+        // SAFETY: icon 1 in this program's own resources, passed by number as the API expects. A test
+        // program has no icon, and Windows then uses a plain one.
+        hIcon: unsafe { LoadIconW(Some(module.into()), PCWSTR(std::ptr::without_provenance(1))) }
+            .unwrap_or_default(),
         lpszClassName: PCWSTR(class_name.as_ptr()),
         ..Default::default()
     };
