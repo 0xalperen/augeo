@@ -1,4 +1,12 @@
-# augeo
+<h1 align="center">
+  <img src="assets/banner.png" alt="augeo" width="820">
+</h1>
+
+<p align="center">
+  <a href="https://github.com/0xalperen/augeo/releases"><img src="https://img.shields.io/github/v/release/0xalperen/augeo?include_prereleases&label=pre-release&color=c4a7e7" alt="Latest pre-release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-eb6f92" alt="GPL-3.0"></a>
+  <img src="https://img.shields.io/badge/Windows%2010%20%7C%2011-NVIDIA-f6c177" alt="Windows 10 and 11, with NVIDIA GPUs">
+</p>
 
 **Real, measurable gaming performance and latency gains on Windows with NVIDIA GPUs. Free and open source, and every change can be undone.**
 
@@ -11,7 +19,7 @@ Most tweak tools sell you hundreds of settings you can't inspect, and no proof t
 - **It finds harmful settings left by older tweak guides,** and can put them back.
 - **Nothing stays running.** No service, kernel driver, telemetry or network code.
 
-> **Status: under test, no release yet.** Performance claims will only be published here once they've been measured. See [what's been tested](#whats-been-tested).
+> **Status: pre-release, tested on one PC.** v0.1.0 hasn't finished its test list, and benchmarks haven't been run in real games yet. Performance claims will only be published here once they've been measured. See [what's been tested](#whats-been-tested).
 
 ## Disclaimer
 
@@ -37,7 +45,7 @@ Design details are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Installation
 
-Download from [Releases](https://github.com/0xalperen/augeo/releases) once a release exists:
+Download from [Releases](https://github.com/0xalperen/augeo/releases). There's nothing to install, so you just run it, and deleting it removes the program. Your undo history stays in `%ProgramData%\augeo`.
 
 - **`augeo-<version>-windows-x64.zip`:** augeo plus PresentMon, needed for benchmarking
 - **`augeo.exe`:** on its own, if you don't need benchmarks
@@ -175,9 +183,9 @@ Tweaks needing a restart can't be switched between runs, so compare series befor
 
 Be aware of how far this has been tested. The full list is in [docs/test-checklist.md](docs/test-checklist.md).
 
-**Tested:** Windows 11 26100 with a Ryzen 5 7600X and RTX 4070 SUPER, driver 610.88, for reading state, NVIDIA settings on a throwaway profile, and the keyboard and mouse input layer. The engine's crash handling is tested by failing at every system call, and by killing a real process at random moments.
+**Tested:** Windows 11 26100 with a Ryzen 5 7600X and RTX 4070 SUPER, driver 610.88, using Windows Terminal and the classic console. Ten tweaks were applied and undone for real: `system#1`, `system#2`, `display#2`, `power#1`, `power#3`, `gpu#1`, `gpu#3`, `gpu#4`, `network#3` and `gpu#5`, including restarts for the last two. The values were then read back outside augeo, apart from the NVIDIA settings, which only augeo can read on that PC. The engine's crash handling is tested by failing at every system call, and by killing a real process at random moments.
 
-**Not yet tested:** applying every tweak on a real system, a real power cut, Intel hybrid CPUs, AMD X3D CPUs, laptops and Optimus, real Windows 10, non-English Windows, and benchmarks in real games.
+**Not yet tested:** the higher-risk tweaks `cpu#1`, `cpu#2`, `network#1` and `system#4`, per-game tweaks, a real power cut, Intel hybrid CPUs, AMD X3D CPUs, laptops and Optimus, real Windows 10, non-English Windows, and benchmarks in real games.
 
 ## FAQ
 
